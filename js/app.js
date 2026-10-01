@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '5';
+  const APP_VERSION = '6';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -535,9 +535,20 @@
       : `<p class="muted small pad">${data().people.length ? 'Ninguém encontrado.' : 'Nenhum colaborador ainda.'}</p>`;
   }
 
+  const needsReason = (field, v) => v !== null && v !== '' && (A.GRADE_RULES[field] || { needsReason: [] }).needsReason.includes(Number(v));
+  const gradeReason = (p, field) => ((p.gradeNotes || {})[field] || {}).text || '';
+
   function ratingRow(p, r) {
     const cur = p[r.field];
     const isSet = cur !== null && cur !== undefined && cur !== '';
+    const reason = gradeReason(p, r.field);
+    let note = '';
+    if (isSet && needsReason(r.field, cur)) {
+      const when = ((p.gradeNotes || {})[r.field] || {}).date;
+      note = reason.trim()
+        ? `<div class="grade-note"><span>Motivo: ${esc(reason)}${when ? ` <span class="muted">(${esc(new Date(when + 'T12:00').toLocaleDateString('pt-BR'))})</span>` : ''}</span> <button class="link small" data-action="edit-reason" data-id="${r.field}">editar motivo</button></div>`
+        : `<div class="grade-warn">Nota sem motivo: o sistema <strong>não está usando</strong> esta nota. <button class="link small" data-action="edit-reason" data-id="${r.field}">Escrever o motivo</button></div>`;
+    }
     const btn = (v) => {
       const label = r.words ? r.words[v] : String(v);
       const tone = r.signed ? (v < 0 ? ' neg' : v > 0 ? ' pos' : '') : '';
@@ -551,6 +562,7 @@
         ${r.words ? '' : `<span class="rating-end">${esc(r.high)}</span>`}
         <button type="button" class="rate-btn clear${isSet ? '' : ' active'}" data-action="rate" data-field="${r.field}" data-value="" title="Ainda não sei / não avaliado">?</button>
       </div>
+      ${note}
     </div>`;
   }
 
@@ -625,9 +637,9 @@
         </div>
       </div>
 
-      <h4>Notas</h4>
+      <h4>Notas ${help('Deixe "?" até ter certeza. Notas extremas (1, 2 ou 5, e "Resiste"/"Apoia") só valem com um fato escrito que as justifique.')} <span class="grade-count">${gradeCountText(p, m)}</span></h4>
       <div class="ratings">${RATINGS.map((r) => ratingRow(p, r)).join('')}</div>
-      <p class="muted small">"?" = ainda não sei. Se a postura ficar em "?", o sistema estima pelas relações da pessoa.</p>
+      <p class="muted small">"?" = ainda não sei. Notas 1, 2 e 5 (e postura "Resiste" ou "Apoia") pedem um motivo: um fato, com o que e quando. Se a postura ficar em "?", o sistema faz uma estimativa e avisa.</p>
 
       <h4>O que sabe fazer ${help('Marque os conhecimentos da lista. "Só ele(a) sabe" indica um risco: se a pessoa sair, ninguém mais sabe fazer.')}</h4>
       ${knowledgeChecklist(p)}
@@ -654,6 +666,38 @@
         <button class="danger" data-action="delete-person" data-id="${esc(p.id)}">Excluir</button>
       </div>
     </div>`;
+  }
+
+  // "3 de 4 notas confirmadas · postura estimada"
+  function gradeCountText(p, m) {
+    if (!m) return '';
+    const fields = ['performance', 'engagement', 'knowledge'];
+    let ok = fields.filter((f) => m[f] !== null).length;
+    let extra = '';
+    if (m.stanceSource && m.stanceSource !== 'inferido') ok++;
+    else if (m.stanceSource === 'inferido') extra = ' · postura estimada';
+    const bad = (m.unjustified || []).length ? ` · ${(m.unjustified || []).length} sem motivo` : '';
+    return `<span class="badge${ok === 4 ? ' st-apoiador' : ''}">${ok} de 4 notas confirmadas${extra}${bad}</span>`;
+  }
+
+  function askReason(field, value, onDone) {
+    const rule = A.GRADE_RULES[field];
+    const r = RATINGS.find((x) => x.field === field);
+    const label = r && r.words ? r.words[value] : `nota ${value}`;
+    const p = person(fichaId);
+    openModal(
+      `Por que "${label}" em ${rule.label}?`,
+      `<p class="muted small">Escreva o fato que justifica a nota: o que aconteceu, quando e qual o resultado. Ex.: "Não bateu a meta em julho, agosto e setembro". Sem motivo, o sistema não usa esta nota.</p>
+       <label>Motivo<textarea name="reason" rows="3" required minlength="10">${esc(gradeReason(p, field))}</textarea></label>`,
+      (f) => {
+        const text = (f.reason || '').trim();
+        if (text.length < 10) {
+          toast('Escreva um motivo com pelo menos 10 caracteres.');
+          return false;
+        }
+        onDone(text);
+      }
+    );
   }
 
   const fichaLinkDefaults = { type: 'colaboracao', strength: 3, sentiment: '' };
@@ -685,7 +729,7 @@
     const cur = fichaId && person(fichaId);
     const p = S.upsert(
       'people',
-      { name: name || '', role: '', departmentId: cur ? cur.departmentId : null, level: 2, managerId: null, knowledge: 3, performance: null, engagement: null, stance: null, skills: [], groups: [], notes: '' },
+      { name: name || '', role: '', departmentId: cur ? cur.departmentId : null, level: 2, managerId: null, knowledge: null, performance: null, engagement: null, stance: null, skills: [], groups: [], notes: '' },
       'p',
       { silent: true }
     );
@@ -851,7 +895,7 @@
         departmentId: depId,
         level: 2,
         managerId: null,
-        knowledge: 3,
+        knowledge: null,
         performance: null,
         engagement: null,
         stance: null,
@@ -989,9 +1033,25 @@
       return `<li>
         <div class="row-top">${personLink(p.id)} <span class="muted small">${esc(pp.role || '')}${pp.role ? ' · ' : ''}${esc(depName(pp.departmentId))}</span></div>
         <div class="small">${esc(reasons[0])}</div>
+        ${basisLine(p.basis)}
         ${reasons.length > 1 ? `<details class="more"><summary>mais ${reasons.length - 1} motivo${reasons.length > 2 ? 's' : ''}</summary><ul>${reasons.slice(1).map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}
       </li>`;
     };
+    const conf = b.lists.confirmar || [];
+    const confirmStrip = conf.length
+      ? `<div class="card confirm-strip">
+          <h3>Confirmar postura <span class="count">${conf.length}</span> ${help(A.DECISION_CATEGORIES.confirmar.hint)}</h3>
+          <p class="muted small">O sistema só <strong>estimou</strong> a postura destas pessoas, a partir de quem convive com elas. Por isso elas não aparecem em "Atenção" nem em "Aliados". Observe e, quando tiver certeza, marque a postura na ficha.</p>
+          <ul class="confirm-list">${conf.map((p) => `<li><a href="#" data-action="open-ficha" data-id="${esc(p.id)}">${esc(pname(p.id))}</a> <span class="muted small">— ${esc(p.reasons.confirmar[0])}</span></li>`).join('')}</ul>
+        </div>`
+      : '';
+    const gaps = [];
+    if (b.missingPerformance) gaps.push(`${b.missingPerformance} sem nota de desempenho`);
+    if (b.estimatedStance) gaps.push(`${b.estimatedStance} com postura só estimada`);
+    if (b.unjustifiedCount) gaps.push(`${b.unjustifiedCount} com nota extrema sem motivo (ignorada)`);
+    const gapsNote = gaps.length
+      ? `<p class="notice-inline small">Base das recomendações: ${esc(gaps.join(' · '))}. Quanto mais notas confirmadas, mais confiável o painel. Em cada pessoa aparece em quantas notas a recomendação se apoia.</p>`
+      : '';
     const cards = BOARD_ORDER.map((cat) => {
       const info = A.DECISION_CATEGORIES[cat];
       const list = b.lists[cat];
@@ -1018,6 +1078,7 @@
         { key: 'exitCost', label: 'Impacto se sair', render: (r) => `<span class="nowrap">${bar(r.exitCost / 100, 'warn')} ${Math.round(r.exitCost)} de 100</span>` },
         { key: 'performance', label: 'Desempenho', sort: (r) => r.performance ?? -1, render: (r) => (r.performance ? r.performance + ' de 5' : '—') },
         { key: 'stance', label: 'Postura', sort: (r) => r.stance ?? -9, render: (r) => stanceBadge(model.byId.get(r.id)) },
+        { key: 'basis', label: 'Base', title: 'Quantas das 4 notas sustentam a recomendação', sort: (r) => r.basis.confirmed.length, render: (r) => basisLine(r.basis, true) },
       ],
       b.people,
       { key: 'tone', dir: 'asc' }
@@ -1030,6 +1091,8 @@
         ${focalNote}
       </div>
       ${HOW_TO_READ}
+      ${gapsNote}
+      ${confirmStrip}
       <div class="board">${cards}</div>
       <div class="card">
         <h3>Mapa de decisão ${help('Cada bolinha é uma pessoa. Quanto mais à direita, maior o impacto se ela sair. Quanto mais para baixo, mais ela resiste ao gerente. Bolinhas grandes são pessoas muito ouvidas.')}</h3>
@@ -1042,6 +1105,23 @@
       </div>
       <p class="muted small">As recomendações ajudam a decidir, mas não substituem a conversa e o bom senso. Antes de qualquer desligamento: retorno claro à pessoa, metas com prazo e orientação jurídica. Ser parente ou casado com alguém nunca é motivo de demissão.</p>`;
   }
+  // "base: 3 notas confirmadas · 1 estimada · faltam: Desempenho"
+  function basisLine(basis, compact) {
+    if (!basis) return '';
+    const c = basis.confirmed.length;
+    const tip = [
+      basis.confirmed.length ? 'Confirmadas: ' + basis.confirmed.join(', ') : '',
+      basis.estimated.length ? 'Estimadas: ' + basis.estimated.join(', ') : '',
+      basis.missing.length ? 'Faltam: ' + basis.missing.join(', ') : '',
+      basis.unjustified.length ? 'Sem motivo (ignoradas): ' + basis.unjustified.join(', ') : '',
+    ]
+      .filter(Boolean)
+      .join(' · ');
+    const tone = c >= 3 ? 'ok' : c >= 2 ? 'mid' : 'low';
+    const text = compact ? `${c} de 4` : `base: ${c} de 4 notas confirmadas${basis.estimated.length ? ' · postura estimada' : ''}`;
+    return `<div class="basis basis-${tone}" title="${esc(tip)}">${esc(text)}</div>`;
+  }
+
   const BOARD_TONES = ['critico', 'cuidado', 'cortar', 'trazer', 'reter', 'aliado', 'normal'];
 
   // Explicação em linguagem simples, mostrada no topo do painel.
@@ -1435,7 +1515,7 @@
           .map(
             (nu, i) => `<div class="mini-card bad">
               <strong>Grupo ${i + 1}</strong> · ${nu.members.length} pessoa(s) · ${nu.departments} setor(es)<br>
-              <div>${nu.members.map(personLink).join(', ')}</div>
+              <div>${nu.members.map((id) => personLink(id) + ((model.byId.get(id) || {}).stanceSource === 'inferido' ? ' <span class="muted small">(postura estimada)</span>' : '')).join(', ')}</div>
               ${nu.familyPairs.length ? `<div class="small"><span class="badge fam">parentes/casal</span> ${nu.familyPairs.map(([a, b]) => `${esc(pname(a))} e ${esc(pname(b))}`).join('; ')}</div>` : ''}
               <div class="small muted">Podem influenciar ${nu.audience.length} colegas (${pct(nu.audienceShare)} da empresa): ${nu.audience.map((id) => esc(pname(id))).join(', ')}</div>
               <button class="small" data-action="simulate-group" data-id="${esc(nu.members.join(','))}">E se o grupo sair?</button>
@@ -1519,7 +1599,7 @@
           <table class="mini">
             <tr><td>Conhecimento que se perde</td><td>${meter(b.knowledge, 'warn')}</td></tr>
             <tr><td>Influência que sai</td><td>${meter(b.influence, 'warn')}</td></tr>
-            <tr><td>Desempenho de quem sai</td><td>${meter(b.performance, 'warn')}</td></tr>
+            <tr><td>Desempenho de quem sai</td><td>${b.performance === null ? '<span class="muted">sem nota — fica fora da conta</span>' : meter(b.performance, 'warn')}</td></tr>
             <tr><td>Comunicação que piora</td><td>${meter(b.efficiency, 'warn')}</td></tr>
             <tr><td>Colegas que podem sair junto</td><td>${meter(b.contagion, 'warn')}</td></tr>
             <tr><td>Pessoas que ficam isoladas</td><td>${meter(b.isolation, 'warn')}</td></tr>
@@ -1855,7 +1935,7 @@
         role: col(row, 'cargo'),
         departmentId: depId,
         level: Number(col(row, 'nivel')) || 2,
-        knowledge: Number(col(row, 'conhecimento')) || 3,
+        knowledge: col(row, 'conhecimento') === '' ? null : Number(col(row, 'conhecimento')),
         skills: col(row, 'habilidades').split('|').map((s) => s.trim()).filter(Boolean),
         groups: col(row, 'grupos').split('|').map((s) => s.trim()).filter(Boolean),
         performance: Number(col(row, 'desempenho')) || null,
@@ -1934,8 +2014,25 @@
       S.remove('people', id);
     },
     rate: (_, el) => {
-      const v = el.dataset.value;
-      updatePerson({ [el.dataset.field]: v === '' ? null : Number(v) }, true);
+      const field = el.dataset.field;
+      const v = el.dataset.value === '' ? null : Number(el.dataset.value);
+      const p = person(fichaId);
+      const notes = { ...(p.gradeNotes || {}) };
+      if (v !== null && needsReason(field, v)) {
+        // Nota extrema: só grava com o motivo escrito.
+        return askReason(field, v, (text) => {
+          notes[field] = { text, date: new Date().toISOString().slice(0, 10) };
+          updatePerson({ [field]: v, gradeNotes: notes }, true);
+        });
+      }
+      delete notes[field];
+      updatePerson({ [field]: v, gradeNotes: notes }, true);
+    },
+    'edit-reason': (field) => {
+      const p = person(fichaId);
+      askReason(field, Number(p[field]), (text) => {
+        updatePerson({ gradeNotes: { ...(p.gradeNotes || {}), [field]: { text, date: new Date().toISOString().slice(0, 10) } } }, true);
+      });
     },
     'chip-del': (value, el) => {
       const kind = el.dataset.kind;

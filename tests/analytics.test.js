@@ -63,6 +63,7 @@ test('hierarquia formal vira laço fraco quando configurada', () => {
 test('posicionamento: informado > relação direta > ocorrências > inferido', () => {
   const people = ['f', 'a', 'b', 'c', 'd'].map((id) => person(id));
   people[1].stance = 2;
+  people[1].gradeNotes = { stance: { text: 'Defende o gerente nas reuniões.' } };
   const d = base(people, [rel('b', 'f', 'boicote', 4), rel('c', 'd', 'amizade', 5)], { focalId: 'f' });
   d.incidents = [{ id: 'i', type: 'retencao_info', actors: ['c'], targets: ['f'], severity: 5 }];
   const m = A.analyze(d);
@@ -139,6 +140,7 @@ test('painel de decisão: sem nota de desempenho ninguém é sugerido para corte
   assert.equal(b.missingPerformance, 4);
   d.people[2].performance = 1;
   d.people[2].engagement = 1;
+  d.people[2].gradeNotes = { performance: { text: 'Abaixo da meta 3 meses seguidos.' } };
   const b2 = A.decisionBoard(d, A.analyze(d));
   assert.ok(b2.people.find((p) => p.id === 'b').reasons.cortar || b2.people.find((p) => p.id === 'b').reasons.reter);
 });
@@ -147,6 +149,7 @@ test('desempenho alto aumenta o custo de saída', () => {
   const mk = (perf) => {
     const people = ['a', 'b', 'c'].map((id) => person(id));
     people[0].performance = perf;
+    people[0].gradeNotes = { performance: { text: 'fato registrado' } };
     return base(people, [rel('a', 'b'), rel('b', 'c'), rel('a', 'c')]);
   };
   assert.ok(A.simulateRemoval(mk(5), ['a']).operationalCost > A.simulateRemoval(mk(1), ['a']).operationalCost);
@@ -177,4 +180,48 @@ test('catálogo de conhecimentos: nomes, importância e conhecimento exclusivo e
   // Exclusivo essencial pesa mais que exclusivo desejável.
   d.knowledge[0].importance = 1;
   assert.ok(A.analyze(d).byId.get('a').knowledgeRisk < m.byId.get('a').knowledgeRisk);
+});
+
+test('nota extrema sem motivo é ignorada; com motivo, vale', () => {
+  const mk = (notes) => {
+    const people = ['f', 'a', 'b'].map((id) => person(id));
+    Object.assign(people[1], { performance: 1, stance: -2, gradeNotes: notes });
+    return base(people, [rel('f', 'a'), rel('a', 'b'), rel('b', 'f')], { focalId: 'f' });
+  };
+  let m = A.analyze(mk({}));
+  assert.equal(m.byId.get('a').performance, null);
+  assert.notEqual(m.byId.get('a').stanceSource, 'informado');
+  assert.deepEqual(m.byId.get('a').unjustified.sort(), ['performance', 'stance']);
+  m = A.analyze(mk({ performance: { text: 'Meta não batida em jul/ago/set' }, stance: { text: 'Boicote em 12/08' } }));
+  assert.equal(m.byId.get('a').performance, 1);
+  assert.equal(m.byId.get('a').stanceSource, 'informado');
+  assert.equal(m.byId.get('a').unjustified.length, 0);
+});
+
+test('"?" em difícil de substituir não vira "fácil": o checklist decide', () => {
+  const people = ['a', 'b'].map((id) => person(id, { knowledge: null }));
+  people[0].skills = ['k1'];
+  const d = base(people, [rel('a', 'b')]);
+  d.knowledge = [{ id: 'k1', name: 'Torno', category: 'Máquinas', importance: 2 }];
+  const m = A.analyze(d);
+  assert.ok(m.byId.get('a').knowledgeRisk > 0.5);
+  assert.equal(m.byId.get('b').knowledgeRisk, 0);
+});
+
+test('desempenho "?" sai do impacto em vez de virar médio', () => {
+  const people = ['a', 'b', 'c'].map((id) => person(id));
+  const d = base(people, [rel('a', 'b'), rel('b', 'c'), rel('a', 'c')]);
+  const s = A.simulateRemoval(d, ['a']);
+  assert.equal(s.performanceKnown, false);
+  assert.equal(s.breakdown.performance, null);
+});
+
+test('postura só estimada não coloca ninguém em "Atenção": vai para "Confirmar postura"', () => {
+  const m = A.analyze(SAMPLE);
+  const b = A.decisionBoard(SAMPLE, m);
+  assert.equal(m.byId.get('mt').stanceSource, 'inferido');
+  const mt = b.people.find((p) => p.id === 'mt');
+  assert.ok(!mt.reasons.cuidado, 'Mateus só tem postura estimada');
+  assert.ok(mt.reasons.confirmar);
+  assert.ok(mt.basis.estimated.includes('Postura com o gerente'));
 });

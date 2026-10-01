@@ -42,6 +42,25 @@ O sistema mede essa estrutura para que as decisões se apoiem em dados e não s�
 
 Os níveis *Muito baixa / Baixa / Média / Alta / Muito alta* dividem cada índice (de 0 a 1) em cinco faixas iguais.
 
+### Notas: só com certeza (regra contra viés)
+
+As notas da ficha (desempenho, engajamento, difícil de substituir e postura) são **opinião** de quem avalia.
+No cenário de boicote, quem avalia pode ter interesse no resultado. Por isso:
+
+- **"?" é o padrão.** Deixe em "?" até ter certeza. "?" significa "não sei", e não "médio" nem "fácil":
+  - desempenho em "?" **fica fora** do cálculo do impacto se sair (os outros itens são reescalados);
+  - difícil de substituir em "?" passa a ser calculado **só pelo checklist** de conhecimentos.
+- **Notas extremas exigem um fato escrito.** Desempenho e engajamento 1, 2 ou 5, difícil de substituir 5 e
+  postura "Resiste" ou "Apoia" só são gravadas com um motivo (o quê, quando, resultado).
+  Uma nota extrema sem motivo, vinda de dados antigos ou importados, **é ignorada** e aparece um aviso na ficha.
+- **Postura estimada não acusa ninguém.** Quando a postura é só estimada pelo sistema (pelas pessoas próximas),
+  a pessoa não entra em "Atenção" nem em "Aliados". Ela vai para **"Confirmar postura"** até alguém observar e marcar.
+- **Cada recomendação mostra a sua base**: quantas das 4 notas estão confirmadas, quais são estimadas e quais
+  faltam. Uma recomendação com base "1 de 4" deve ser tratada como hipótese, não como conclusão.
+
+Viés que continua existindo, e que o sistema não elimina: você tende a ter "certeza" primeiro sobre quem
+observa mais, normalmente quem resiste. Procure avaliar todas as pessoas com o mesmo cuidado.
+
 ### Conhecimentos (checklist)
 
 Os conhecimentos vêm de uma **lista única** (aba *Conhecimentos*) e não de texto livre. Assim não aparecem

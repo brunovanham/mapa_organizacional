@@ -153,6 +153,40 @@
     Object.assign(p, { performance, engagement, groups });
   }
 
+  // Motivos das notas extremas (o sistema só usa nota 1, 2 ou 5 — e postura ±2 — com um fato escrito).
+  const NOTES = {
+    ceo: {
+      performance: 'Bateu as metas anuais nos últimos 3 anos.',
+      engagement: 'Conduz pessoalmente os rituais da empresa.',
+      knowledge: 'Único com relacionamento direto com os bancos e com a estratégia.',
+      stance: 'Contratou e defende publicamente o novo gerente.',
+    },
+    gg: { engagement: 'Implantou o ritual semanal de indicadores no primeiro mês.' },
+    rs: {
+      engagement: 'Faltou a 3 das 4 reuniões de gestão de setembro.',
+      knowledge: 'Planejamento de produção só ele domina por completo; sem manual.',
+      stance: 'Atrasou o relatório pedido pelo gerente em 12/08 (ocorrência registrada) e não repassa dados de produção.',
+    },
+    js: {
+      engagement: 'Deixou de participar das reuniões comerciais com o gerente desde agosto.',
+      stance: 'Disse à equipe em 20/08 que a nova política de descontos "não vai durar".',
+    },
+    fr: { engagement: 'Voluntária na implantação dos indicadores.', stance: 'Ajudou a implantar o ritual de indicadores (ocorrência registrada).' },
+    an: { engagement: 'Manteve a escala antiga de turno contra a orientação (03/09).' },
+    gu: {
+      performance: 'Entregou a integração do ERP no prazo e sem retrabalho.',
+      knowledge: 'Único que mantém as integrações do ERP; sem documentação.',
+    },
+    he: { performance: 'Maior faturamento da equipe comercial nos últimos 4 trimestres.' },
+    dg: { performance: 'Abaixo da meta de produção em julho, agosto e setembro.', engagement: 'Três atrasos não justificados no trimestre.' },
+    ig: { performance: 'Não bateu a meta de vendas em nenhum mês do trimestre.', engagement: 'Não fez o treinamento obrigatório de vendas.' },
+    tc: { performance: 'Erros recorrentes nos pedidos de compra (5 retrabalhos em setembro).' },
+  };
+  for (const p of SAMPLE_DATA.people) {
+    const notes = NOTES[p.id] || {};
+    p.gradeNotes = Object.fromEntries(Object.entries(notes).map(([f, text]) => [f, { text, date: '2026-09-30' }]));
+  }
+
   // Catálogo de conhecimentos (a ficha marca itens desta lista, como um checklist).
   // importance: 3 = essencial, 2 = importante, 1 = desejável.
   const K = (id, name, category, importance, legacy) => ({ id, name, category, importance, legacy });

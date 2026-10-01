@@ -74,6 +74,27 @@
   const normSkill = (s) => String(s).trim().toLowerCase();
   // Nota de 1 a 5; vazio = não avaliado (null).
   const grade = (v) => (v === null || v === undefined || v === '' || Number.isNaN(Number(v)) ? null : clamp(Number(v), 1, 5));
+  const isSet = (v) => !(v === null || v === undefined || v === '' || Number.isNaN(Number(v)));
+
+  // Notas extremas só valem com um motivo escrito (fato que justifica).
+  // Sem motivo, a nota é ignorada nos cálculos e tratada como "?".
+  const GRADE_RULES = {
+    performance: { label: 'Desempenho', needsReason: [1, 2, 5] },
+    engagement: { label: 'Engajamento', needsReason: [1, 2, 5] },
+    knowledge: { label: 'Difícil de substituir', needsReason: [5] },
+    stance: { label: 'Postura com o gerente', needsReason: [-2, 2] },
+  };
+  const reasonOf = (p, field) => ((p.gradeNotes || {})[field] || {}).text || '';
+  /** Valor da nota que o sistema usa: null se vazia ou extrema sem motivo. */
+  function effectiveGrade(p, field) {
+    const v = p[field];
+    if (!isSet(v)) return null;
+    const n = Number(v);
+    if (GRADE_RULES[field].needsReason.includes(n) && !reasonOf(p, field).trim()) return null;
+    return n;
+  }
+  /** Notas dadas sem o motivo exigido (ignoradas nos cálculos). */
+  const unjustifiedGrades = (p) => Object.keys(GRADE_RULES).filter((f) => isSet(p[f]) && effectiveGrade(p, f) === null);
   const personGroups = (p) => [...new Set((p.groups || []).map((x) => String(x).trim()).filter(Boolean))];
 
   function sentimentOf(r) {
@@ -448,8 +469,9 @@
     for (let i = 0; i < n; i++) {
       if (i === focalIdx) continue;
       const p = g.people[i];
-      if (p.stance !== null && p.stance !== undefined && p.stance !== '') {
-        stance[i] = clamp(Number(p.stance), -2, 2);
+      const informed = effectiveGrade(p, 'stance');
+      if (informed !== null) {
+        stance[i] = clamp(informed, -2, 2);
         source[i] = 'informado';
       } else if (rel[i].w > 0) {
         stance[i] = rel[i].s / rel[i].w;
@@ -532,11 +554,13 @@
     const uniqueSkills = uniqueKeys.map((ks) => ks.map(skillLabel));
     const uniqueEssential = uniqueKeys.map((ks) => ks.filter((k) => (catalog.get(k) || {}).importance === 3).map(skillLabel));
     const knowledgeRisk = g.people.map((p, i) => {
-      const k = clamp(Number(p.knowledge) || 0, 0, 5) / 5;
       const all = keysOf(p);
       const total = sum(all.map(skillWeight));
       const share = total ? sum(uniqueKeys[i].map(skillWeight)) / total : 0;
-      return k * (0.4 + 0.6 * share);
+      const kGrade = effectiveGrade(p, 'knowledge');
+      // Sem a nota ("?"), o risco vem só do checklist: "não sei" não é "fácil de substituir".
+      if (kGrade === null) return 0.8 * share;
+      return (clamp(kGrade, 0, 5) / 5) * (0.4 + 0.6 * share);
     });
     const formal = g.people.map((p) => clamp(Number(p.level) || 1, 1, 5) / 5);
     const peso = influence.map(
@@ -573,9 +597,10 @@
       knowledgeRisk: knowledgeRisk[i],
       uniqueSkills: uniqueSkills[i],
       uniqueEssential: uniqueEssential[i],
-      knowledge: clamp(Number(p.knowledge) || 0, 0, 5),
-      performance: grade(p.performance),
-      engagement: grade(p.engagement),
+      knowledge: effectiveGrade(p, 'knowledge') === null ? null : clamp(effectiveGrade(p, 'knowledge'), 0, 5),
+      performance: grade(effectiveGrade(p, 'performance')),
+      engagement: grade(effectiveGrade(p, 'engagement')),
+      unjustified: unjustifiedGrades(p),
       groups: personGroups(p),
       formal: formal[i],
       peso: peso[i],
@@ -1012,10 +1037,13 @@
     const s4 = Math.min(1, (totalSkills ? (skillsLost.length / totalSkills) * 3 : 0) + maxKnowledgeRisk * 0.5);
     const s5 = Math.min(1, contagion.length / 5);
     // Desempenho: perder quem entrega muito custa mais. Sem nota, assume-se 3 (médio).
-    const perf = removedMetrics.map((m) => (m.performance === null ? 3 : m.performance));
-    const s6 = perf.length ? Math.max(0, Math.max(...perf) - 2) / 3 : 0;
-    const operationalCost =
-      100 * (0.2 * s1 + 0.1 * s2 + 0.2 * s3 + 0.25 * s4 + 0.1 * s5 + 0.15 * s6);
+    // Desempenho sem nota NÃO é suposto "médio": o item sai da conta e os
+    // demais pesos são reescalados para continuar de 0 a 100.
+    const perf = removedMetrics.map((m) => m.performance).filter((v) => v !== null);
+    const perfKnown = perf.length > 0;
+    const s6 = perfKnown ? Math.max(0, Math.max(...perf) - 2) / 3 : 0;
+    const base = 0.2 * s1 + 0.1 * s2 + 0.2 * s3 + 0.25 * s4 + 0.1 * s5;
+    const operationalCost = 100 * (perfKnown ? base + 0.15 * s6 : base / 0.85);
 
     return {
       removed: [...removed],
@@ -1038,7 +1066,8 @@
       focalReachBefore: before.focal ? before.focal.reach2Share : null,
       focalReachAfter: after.focal ? after.focal.reach2Share : null,
       operationalCost,
-      breakdown: { efficiency: s1, isolation: s2, influence: s3, knowledge: s4, contagion: s5, performance: s6 },
+      breakdown: { efficiency: s1, isolation: s2, influence: s3, knowledge: s4, contagion: s5, performance: perfKnown ? s6 : null },
+      performanceKnown: perfKnown,
       after,
     };
   }
@@ -1068,6 +1097,7 @@
     influente: { label: 'Quem tem voz na empresa', hint: 'As pessoas que os colegas mais escutam, seja qual for o cargo.' },
     aliado: { label: 'Aliados do gerente', hint: 'Apoiam o gerente e são ouvidos. Podem ajudar a espalhar as mudanças.' },
     reter: { label: 'Não pode perder', hint: 'Se saírem, a empresa sente: sabem coisas que ninguém mais sabe, ligam equipes, levariam colegas junto ou têm desempenho excelente.' },
+    confirmar: { label: 'Confirmar postura', hint: 'O sistema só estimou a postura destas pessoas, pelas pessoas próximas. Antes de agir, observe e marque a postura na ficha.' },
     cortar: { label: 'Onde dá para cortar', hint: 'A saída teria pouco impacto E há motivo concreto: desempenho baixo, pouco engajamento ou boicotes registrados.' },
   };
 
@@ -1105,16 +1135,37 @@
       return c;
     };
 
+    // Quantas das 4 notas sustentam a recomendação.
+    const basisOf = (m) => {
+      const confirmed = [];
+      const estimated = [];
+      const missing = [];
+      for (const [f, rule] of Object.entries(GRADE_RULES)) {
+        if (f === 'stance') {
+          if (m.stance === null) missing.push(rule.label);
+          else if (m.stanceSource === 'inferido') estimated.push(rule.label);
+          else confirmed.push(rule.label);
+        } else if (m[f] === null) missing.push(rule.label);
+        else confirmed.push(rule.label);
+      }
+      return { confirmed, estimated, missing, unjustified: m.unjustified.map((f) => GRADE_RULES[f].label) };
+    };
+
     const people = others.map((m) => {
       const r = exit.get(m.id) || { operationalCost: 0, contagion: 0, skillsLost: 0, resistanceReduction: 0 };
       const reasons = {};
       const add = (cat, text) => (reasons[cat] = reasons[cat] || []).push(text);
       const neg = negIncidents(m.id);
       const label = m.stanceLabel;
+      const estimated = m.stanceSource === 'inferido';
 
       if (m.influence >= hiInfl) add('influente', `é a ${m.influenceRank}ª pessoa mais ouvida da empresa`);
 
-      if (label === 'resistente') {
+      if (label === 'resistente' && estimated && m.influence >= engageInfl)
+        add('confirmar', 'o sistema estima que resiste (pelas pessoas próximas), mas ninguém confirmou');
+      if (label === 'apoiador' && estimated && m.influence >= medInfl)
+        add('confirmar', 'o sistema estima que apoia (pelas pessoas próximas), mas ninguém confirmou');
+      if (label === 'resistente' && !estimated) {
         if (m.influence >= medInfl) add('cuidado', 'resiste ao gerente e é ouvido(a) por muitos colegas');
         const nu = nucleus.get(m.id);
         if (nu && nu.size > 1) add('cuidado', `faz parte de um grupo de ${nu.size} pessoas que resistem juntas`);
@@ -1125,14 +1176,14 @@
       if ((m.tension || 0) >= 3 && label !== 'apoiador') add('cuidado', `está no meio de ${m.tension} conflitos entre colegas`);
 
       if (label === 'neutro' && engageTop.has(m.id) && m.influence >= engageInfl) add('trazer', 'ainda não tomou partido, é ouvido(a) pelos colegas e convive com quem resiste');
-      if (label === 'resistente' && m.stance > -1.5 && neg === 0 && m.stanceSource !== 'informado')
+      if (label === 'resistente' && !estimated && m.stance > -1.5 && neg === 0 && m.stanceSource !== 'informado')
         add('trazer', 'resiste pouco e não tem boicote registrado: dá para reverter');
       if (label === 'apoiador' && m.engagement !== null && m.engagement <= 2) add('trazer', 'apoia o gerente, mas está desmotivado(a)');
 
-      if (label === 'apoiador' && m.influence >= medInfl) add('aliado', 'apoia o gerente e é ouvido(a) pelos colegas');
+      if (label === 'apoiador' && !estimated && m.influence >= medInfl) add('aliado', 'apoia o gerente e é ouvido(a) pelos colegas');
 
       if (r.operationalCost >= hiCost) add('reter', `a saída teria impacto alto (${Math.round(r.operationalCost)} de 100)`);
-      if (m.uniqueSkills.length && (m.knowledge >= 3 || m.uniqueEssential.length)) add('reter', `é a única pessoa que sabe: ${m.uniqueSkills.join(', ')}`);
+      if (m.uniqueSkills.length && (m.knowledge === null || m.knowledge >= 3 || m.uniqueEssential.length)) add('reter', `é a única pessoa que sabe: ${m.uniqueSkills.join(', ')}`);
       if (m.articulation) add('reter', 'é a única ligação entre partes da equipe');
       if (r.contagion >= 3) add('reter', `${r.contagion} colegas muito próximos podem sair junto`);
       if (m.performance === 5 || (m.performance === 4 && reasons.reter)) add('reter', `desempenho excelente (${m.performance} de 5)`);
@@ -1186,6 +1237,7 @@
         performance: m.performance,
         engagement: m.engagement,
         lowImpact,
+        basis: basisOf(m),
       };
     });
 
@@ -1202,6 +1254,8 @@
       lists,
       thresholds: { hiCost, loCost, hiInfl, medInfl },
       missingPerformance: others.filter((m) => m.performance === null).length,
+      unjustifiedCount: others.filter((m) => m.unjustified.length).length,
+      estimatedStance: others.filter((m) => m.stanceSource === 'inferido').length,
       lowImpactWithoutGrades: people.filter((p) => p.lowImpact && !p.reasons.cortar && p.performance === null).map((p) => p.id),
     };
   }
@@ -1307,6 +1361,8 @@
     recommendations,
     decisionBoard,
     DECISION_CATEGORIES,
+    GRADE_RULES,
+    effectiveGrade,
     stanceLabel,
     sentimentOf,
     // expostos para testes

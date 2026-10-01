@@ -54,6 +54,7 @@
 }
 
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 body {
   margin: 0;
   font: 14px/1.45 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
@@ -444,3 +445,18 @@ body.gated { overflow: hidden; }
 .company-intro { margin-bottom: 12px; }
 details.admin summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
 @media (max-width: 760px) { .gate-grid { grid-template-columns: 1fr; } }
+
+/* ---------- notas confirmadas ---------- */
+.grade-note, .grade-warn { grid-column: 1 / -1; font-size: 12px; padding: 4px 8px; border-radius: 6px; margin-top: 2px; }
+.grade-note { background: var(--surface-2); color: var(--text); }
+.grade-warn { background: var(--surface-2); border-left: 3px solid var(--warn); color: var(--text); }
+.grade-count { margin-left: 6px; text-transform: none; letter-spacing: 0; font-weight: 400; }
+.basis { font-size: 11px; margin-top: 2px; cursor: help; }
+.basis-ok { color: var(--ok); }
+.basis-mid { color: var(--warn); }
+.basis-low { color: var(--bad); }
+.confirm-strip { border-left: 4px solid var(--warn); }
+.confirm-strip h3 { display: flex; align-items: center; gap: 8px; }
+.confirm-strip .count { font-size: 13px; font-weight: 600; background: var(--surface-2); border-radius: 10px; padding: 1px 9px; }
+.confirm-list { columns: 2; padding-left: 18px; margin: 0; }
+@media (max-width: 900px) { .confirm-list { columns: 1; } }
