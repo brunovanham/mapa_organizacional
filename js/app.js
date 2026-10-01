@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '13';
+  const APP_VERSION = '14';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -1938,7 +1938,13 @@
       <label>Chave de acesso (token)<input id="inv-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
       <label class="chk"><input type="checkbox" id="inv-here" checked> Usar o convite também neste navegador</label>
       <div class="btn-row"><button class="primary" data-action="inv-make">Gerar link de convite</button></div>
-      <div id="inv-box"></div>
+      <div id="inv-box">${
+        G.invite
+          ? `<p class="small"><strong>Link de convite já salvo neste navegador</strong> (o mesmo que você enviou):</p>
+             <div class="link-box"><input id="gh-link-input" readonly value="${esc(G.inviteLink(G.invite))}"><button data-action="gh-copy">Copiar</button></div>`
+          : ''
+      }</div>
+      <p class="muted small"><strong>Contingência:</strong> a mesma chave sempre gera <strong>o mesmo link</strong>. Se alguém apagar os dados do navegador, basta reenviar o link, copiando daqui ou gerando de novo com a chave. Guarde a chave num lugar seguro (por exemplo, um gerenciador de senhas): o GitHub só a mostra uma vez. Se perder a chave, crie outra e gere um link novo; as empresas não são afetadas, só será preciso reenviar o link novo a todos.</p>
       <p class="muted small"><strong>Importante:</strong> o link leva a chave do GitHub (na parte depois do <code>#</code>, que não é enviada a nenhum servidor nem fica no código). Envie só para quem você conhece, por mensagem privada. Quem tiver o link consegue gravar no repositório de dados, mas <strong>não consegue ler nenhuma empresa sem o código dela</strong>. Para cortar o acesso de todos, apague a chave no GitHub e gere um convite novo.</p>`;
     box.innerHTML = companyIntro + `<details class="admin" id="admin-box"><summary>Administrador: gerar link de convite</summary>` + inviteAdmin +
       `<details class="admin"><summary>Outro modo: um único arquivo de dados com a sua chave (sem empresas)</summary>` + `
