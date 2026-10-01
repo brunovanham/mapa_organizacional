@@ -18,6 +18,8 @@
   const uid = (prefix) => prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
   const listeners = [];
+  const persistListeners = [];
+  let version = 0;
   let data = load();
 
   function load() {
@@ -43,25 +45,36 @@
     };
   }
 
-  function save() {
+  // silent: grava sem notificar a interface (usado na ficha, para não perder o foco).
+  // meta.fromRemote: dados vindos do GitHub (não precisam ser reenviados).
+  function save(silent, meta) {
+    version++;
     try {
       localStorage.setItem(KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('Falha ao salvar dados locais', e);
     }
-    listeners.forEach((fn) => fn(data));
+    persistListeners.forEach((fn) => fn(data, meta || {}));
+    if (!silent) listeners.forEach((fn) => fn(data));
   }
 
   const Store = {
     get data() {
       return data;
     },
+    get version() {
+      return version;
+    },
     onChange(fn) {
       listeners.push(fn);
     },
-    replace(newData) {
+    // Chamado em toda gravação, inclusive as silenciosas (usado pelo GitHubSync).
+    onPersist(fn) {
+      persistListeners.push(fn);
+    },
+    replace(newData, meta) {
       data = migrate(JSON.parse(JSON.stringify(newData)));
-      save();
+      save(false, meta);
     },
     reset() {
       data = empty();
@@ -71,23 +84,23 @@
       data.settings = { ...data.settings, ...patch };
       save();
     },
-    upsert(collection, item, prefix) {
+    upsert(collection, item, prefix, opts) {
       const list = data[collection];
       if (!item.id) item.id = uid(prefix || collection[0]);
       const i = list.findIndex((x) => x.id === item.id);
       if (i >= 0) list[i] = { ...list[i], ...item };
       else list.push(item);
-      save();
+      save(opts && opts.silent);
       return item;
     },
-    addMany(collection, items, prefix) {
+    addMany(collection, items, prefix, opts) {
       for (const item of items) {
         if (!item.id) item.id = uid(prefix || collection[0]);
         data[collection].push(item);
       }
-      save();
+      save(opts && opts.silent);
     },
-    remove(collection, id) {
+    remove(collection, id, opts) {
       data[collection] = data[collection].filter((x) => x.id !== id);
       if (collection === 'people') {
         data.relations = data.relations.filter((r) => r.source !== id && r.target !== id);
@@ -101,7 +114,7 @@
       if (collection === 'departments') {
         data.people.forEach((p) => p.departmentId === id && (p.departmentId = null));
       }
-      save();
+      save(opts && opts.silent);
     },
     exportJSON() {
       return JSON.stringify(data, null, 2);

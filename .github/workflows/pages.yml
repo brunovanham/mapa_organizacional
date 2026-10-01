@@ -1,0 +1,57 @@
+# Publica a interface no GitHub Pages a cada push no branch padrão.
+# Só publica o código (público). Os dados ficam num repositório PRIVADO separado.
+name: Publicar interface (GitHub Pages)
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  testes:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+      - run: npm test
+
+  publicar:
+    needs: testes
+    if: github.ref_name == github.event.repository.default_branch
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - name: Verificar se o GitHub Pages está ativado
+        id: pages
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          if gh api "repos/${{ github.repository }}/pages" >/dev/null 2>&1; then
+            echo "ativo=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "::notice::GitHub Pages ainda não está ativado. Ative em Settings → Pages → Source: GitHub Actions e rode este workflow de novo."
+            echo "ativo=false" >> "$GITHUB_OUTPUT"
+          fi
+      - uses: actions/checkout@v4
+        if: steps.pages.outputs.ativo == 'true'
+      - uses: actions/configure-pages@v5
+        if: steps.pages.outputs.ativo == 'true'
+      - uses: actions/upload-pages-artifact@v3
+        if: steps.pages.outputs.ativo == 'true'
+        with:
+          path: .
+      - id: deployment
+        if: steps.pages.outputs.ativo == 'true'
+        uses: actions/deploy-pages@v4

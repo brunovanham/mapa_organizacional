@@ -46,7 +46,7 @@
 
   let model = null;
   let cy = null;
-  let currentView = 'mapa';
+  let currentView = 'painel';
   let selectedId = null;
   let lastLayoutKey = '';
   const simSelection = new Set();
@@ -56,7 +56,10 @@
 
   const data = () => S.data;
   const person = (id) => data().people.find((p) => p.id === id);
-  const pname = (id) => (person(id) || { name: '(removido)' }).name;
+  const pname = (id) => {
+    const p = person(id);
+    return p ? p.name || '(sem nome)' : '(removido)';
+  };
   const dep = (id) => data().departments.find((d) => d.id === id);
   const depName = (id) => (dep(id) || { name: '—' }).name;
 
@@ -64,6 +67,7 @@
     model = A.analyze(data());
     ranking = null;
     simResult = null;
+    board = null;
   }
 
   function toast(msg) {
@@ -148,7 +152,8 @@
     $('#company-name').textContent = data().settings.companyName || '';
     const r = {
       mapa: renderMap,
-      pessoas: renderPeople,
+      painel: renderPainel,
+      colaboradores: renderColaboradores,
       departamentos: renderDepartments,
       relacoes: renderRelations,
       analise: renderAnalysis,
@@ -164,6 +169,10 @@
   function nodeColor(p, m, colorBy) {
     if (colorBy === 'stance') return STANCE_COLORS()[m.stanceLabel] || cssVar('--unknown');
     if (colorBy === 'community') return CLUSTER_PALETTE[m.community % CLUSTER_PALETTE.length];
+    if (colorBy === 'group') {
+      const gi = allGroups().indexOf((p.groups || [])[0]);
+      return gi >= 0 ? CLUSTER_PALETTE[gi % CLUSTER_PALETTE.length] : cssVar('--unknown');
+    }
     return (dep(p.departmentId) || {}).color || cssVar('--unknown');
   }
 
@@ -339,6 +348,8 @@
     if (colorBy === 'stance') {
       const c = STANCE_COLORS();
       items = Object.entries(c).map(([k, v]) => [k, v]);
+    } else if (colorBy === 'group') {
+      items = allGroups().map((g, i) => [g, CLUSTER_PALETTE[i % CLUSTER_PALETTE.length]]).concat([['sem grupo', cssVar('--unknown')]]);
     } else if (colorBy === 'community') {
       items = model.communities.map((c) => [`Cluster ${c.id + 1} (${pname(c.leader)})`, CLUSTER_PALETTE[c.id % CLUSTER_PALETTE.length]]);
     } else {
@@ -388,6 +399,7 @@
       <p class="muted">${esc(p.role || '')} · ${esc(depName(p.departmentId))} · ${esc(A.LEVELS[p.level] || '')}</p>
       <p>${stanceBadge(m)} ${m.articulation ? '<span class="badge warn">ponto único de conexão</span>' : ''}</p>
       <table class="mini">
+        <tr><td>Notas</td><td>desempenho ${m.performance ?? '—'} · engajamento ${m.engagement ?? '—'} · conhecimento ${m.knowledge}</td></tr>
         <tr><td>Influência</td><td>${bar(m.influence)} ${fx(m.influence)} <span class="muted">(#${m.influenceRank})</span></td></tr>
         <tr><td>Peso geral</td><td>${bar(m.peso)} ${fx(m.peso)}</td></tr>
         <tr><td>Intermediação</td><td>${fx(m.betweenness, 3)}</td></tr>
@@ -406,87 +418,507 @@
       <h4>Relações (${rels.length})</h4>
       <ul class="rel-list">${relRows || '<li class="muted">Nenhuma relação cadastrada.</li>'}</ul>
       <div class="btn-row">
-        <button data-action="edit-person" data-id="${esc(p.id)}">Editar</button>
+        <button data-action="edit-person" data-id="${esc(p.id)}">Abrir ficha</button>
         <button data-action="new-rel-from" data-id="${esc(p.id)}">+ Relação</button>
         <button data-action="simulate-person" data-id="${esc(p.id)}">Simular saída</button>
         ${model.focalId !== p.id ? `<button data-action="set-focal" data-id="${esc(p.id)}">Definir como focal</button>` : ''}
       </div>`;
   }
 
-  // ------------------------------------------------------------- PESSOAS
-  function renderPeople() {
+  // ------------------------------------------------------- COLABORADORES
+  // Tela de cadastro rápido: lista à esquerda, ficha completa à direita.
+  // As alterações da ficha são salvas automaticamente (sem botão "salvar").
+  let fichaId = null;
+  let peopleTableMode = false;
+
+  const RATINGS = [
+    { field: 'performance', label: 'Desempenho', values: [1, 2, 3, 4, 5], low: 'abaixo do esperado', high: 'excepcional' },
+    { field: 'knowledge', label: 'Conhecimento crítico', values: [0, 1, 2, 3, 4, 5], low: 'fácil de substituir', high: 'insubstituível' },
+    { field: 'engagement', label: 'Engajamento', values: [1, 2, 3, 4, 5], low: 'desmotivado(a)', high: 'muito engajado(a)' },
+    { field: 'stance', label: 'Posição em relação ao gerente', values: [-2, -1, 0, 1, 2], low: 'resiste / boicota', high: 'apoia ativamente', signed: true },
+  ];
+
+  const filledGrades = (p) => RATINGS.filter((r) => p[r.field] !== null && p[r.field] !== undefined && p[r.field] !== '').length;
+  const linksOf = (id) => data().relations.filter((r) => r.source === id || r.target === id);
+  const allGroups = () => [...new Set(data().people.flatMap((p) => p.groups || []))].sort((a, b) => a.localeCompare(b));
+
+  function renderColaboradores() {
+    $('.cad').hidden = peopleTableMode;
+    $('#people-table').hidden = !peopleTableMode;
+    $('#toggle-table-label').textContent = peopleTableMode ? 'Voltar à ficha' : 'Ver tabela';
+    if (peopleTableMode) return renderPeopleTable();
+    renderCadList();
+    renderFicha();
+  }
+
+  function renderCadList() {
+    const q = ($('#cad-search').value || '').trim().toLowerCase();
+    const groups = new Map();
+    for (const p of data().people.slice().sort((a, b) => (a.name || '').localeCompare(b.name || ''))) {
+      if (q && !`${p.name} ${p.role} ${depName(p.departmentId)} ${(p.groups || []).join(' ')}`.toLowerCase().includes(q)) continue;
+      const k = p.departmentId ? depName(p.departmentId) : 'Sem setor';
+      if (!groups.has(k)) groups.set(k, []);
+      groups.get(k).push(p);
+    }
+    $('#cad-items').innerHTML = groups.size
+      ? [...groups.entries()]
+          .map(
+            ([d, ps]) => `<div class="cad-group"><div class="cad-group-title">${esc(d)} <span class="muted">(${ps.length})</span></div>${ps
+              .map((p) => {
+                const g = filledGrades(p);
+                const l = linksOf(p.id).length;
+                return `<button class="cad-item${p.id === fichaId ? ' active' : ''}" data-action="open-ficha" data-id="${esc(p.id)}">
+                  <span class="cad-name">${esc(p.name || '(sem nome)')}</span>
+                  <span class="cad-meta"><span class="dots" title="${g} de 4 notas preenchidas">${'●'.repeat(g)}${'○'.repeat(4 - g)}</span> ${l} vínculo${l === 1 ? '' : 's'}</span>
+                </button>`;
+              })
+              .join('')}</div>`
+          )
+          .join('')
+      : `<p class="muted small pad">${data().people.length ? 'Ninguém encontrado.' : 'Nenhum colaborador ainda.'}</p>`;
+  }
+
+  function ratingRow(p, r) {
+    const cur = p[r.field];
+    const isSet = cur !== null && cur !== undefined && cur !== '';
+    const btn = (v) => {
+      const label = r.signed && v > 0 ? '+' + v : String(v);
+      const tone = r.signed ? (v < 0 ? ' neg' : v > 0 ? ' pos' : '') : '';
+      return `<button type="button" class="rate-btn${tone}${isSet && Number(cur) === v ? ' active' : ''}" data-action="rate" data-field="${r.field}" data-value="${v}" aria-pressed="${isSet && Number(cur) === v}">${label}</button>`;
+    };
+    return `<div class="rating">
+      <div class="rating-label">${esc(r.label)}</div>
+      <div class="rating-scale">
+        <span class="rating-end">${esc(r.low)}</span>
+        ${r.values.map(btn).join('')}
+        <span class="rating-end">${esc(r.high)}</span>
+        <button type="button" class="rate-btn clear${isSet ? '' : ' active'}" data-action="rate" data-field="${r.field}" data-value="" title="Não avaliado">?</button>
+      </div>
+    </div>`;
+  }
+
+  function chips(list, kind) {
+    return (list || [])
+      .map((x) => `<span class="chip">${esc(x)}<button type="button" data-action="chip-del" data-kind="${kind}" data-id="${esc(x)}" aria-label="Remover ${esc(x)}">×</button></span>`)
+      .join('');
+  }
+
+  function renderFicha() {
+    const box = $('#ficha');
+    const p = fichaId && person(fichaId);
+    if (!p) {
+      fichaId = null;
+      box.innerHTML = `<div class="card guide">
+        <h3>Como cadastrar</h3>
+        <ol>
+          <li><strong>Setores</strong>: crie pelo campo "Setor" da ficha (opção "+ Novo setor…") ou na aba Setores e grupos.</li>
+          <li><strong>Colaboradores</strong>: clique em <em>+ Novo colaborador</em> ou cole uma lista de nomes à esquerda.</li>
+          <li><strong>Notas</strong>: clique nos números (desempenho, conhecimento, engajamento e posição em relação ao gerente).</li>
+          <li><strong>Vínculos</strong>: digite o nome de quem se relaciona com a pessoa, escolha o tipo e a força.</li>
+          <li>Abra o <strong>Painel</strong> para ver as recomendações.</li>
+        </ol>
+        <p class="muted small">Tudo é salvo automaticamente. A bolinha ●○ na lista mostra quantas notas já foram dadas.</p>
+        ${data().people.length ? '' : '<p><button data-action="load-sample">Ver com exemplo fictício</button></p>'}
+      </div>`;
+      return;
+    }
+    const m = model.byId.get(p.id);
+    const others = data().people.filter((x) => x.id !== p.id);
+    const links = linksOf(p.id);
+    const ids = data().people.map((x) => x.id);
+    const idx = ids.indexOf(p.id);
+    const sentOpts = SENTIMENT_OPTIONS.slice(1);
+    const linkRows = links
+      .map((r) => {
+        const other = r.source === p.id ? r.target : r.source;
+        const t = A.RELATION_TYPES[r.type] || {};
+        const dir = t.directed ? (r.source === p.id ? `${esc(p.name.split(' ')[0] || 'esta pessoa')} → ${esc(pname(other).split(' ')[0])}` : `${esc(pname(other).split(' ')[0])} → ${esc(p.name.split(' ')[0] || 'esta pessoa')}`) : '';
+        const s = A.sentimentOf(r);
+        return `<tr class="${s < 0 ? 'row-neg' : ''}">
+          <td><a href="#" data-action="open-ficha" data-id="${esc(other)}">${esc(pname(other))}</a><div class="muted small">${esc(depName((person(other) || {}).departmentId))}</div></td>
+          <td><select data-rel="${esc(r.id)}" data-relfield="type">${typeOptions(r.type)}</select>
+            ${t.directed ? `<div class="small muted">${dir} <button class="link small" data-action="rel-flip" data-id="${esc(r.id)}">inverter</button></div>` : ''}</td>
+          <td><select data-rel="${esc(r.id)}" data-relfield="strength">${options([1, 2, 3, 4, 5].map((v) => [v, v]), r.strength)}</select></td>
+          <td><select data-rel="${esc(r.id)}" data-relfield="sentiment">${options([['', 'padrão (' + (A.RELATION_TYPES[r.type] || {}).sentiment + ')'], ...sentOpts], r.sentiment ?? '')}</select></td>
+          <td><button class="link danger-text" data-action="rel-del" data-id="${esc(r.id)}" aria-label="Remover vínculo">remover</button></td>
+        </tr>`;
+      })
+      .join('');
+
+    box.innerHTML = `<div class="card ficha-card">
+      <div class="ficha-head">
+        <input class="ficha-name" data-field="name" value="${esc(p.name)}" placeholder="Nome do colaborador" aria-label="Nome">
+        <div class="ficha-badges">
+          ${m ? stanceBadge(m) : ''}
+          ${m ? `<span class="badge" title="Posição no ranking de influência">influência #${m.influenceRank}</span>` : ''}
+          ${p.id === model.focalId ? '<span class="badge st-focal">pessoa focal</span>' : ''}
+        </div>
+      </div>
+
+      <div class="grid3">
+        <label>Cargo<input data-field="role" value="${esc(p.role)}" placeholder="ex.: Supervisor de produção"></label>
+        <label>Setor<select data-field="departmentId">${depOptions(p.departmentId)}<option value="__new">+ Novo setor…</option></select></label>
+        <label>Nível<select data-field="level">${options(Object.entries(A.LEVELS), p.level)}</select></label>
+        <label>Gestor direto<select data-field="managerId"><option value="">—</option>${options(others.slice().sort((a, b) => a.name.localeCompare(b.name)).map((x) => [x.id, x.name]), p.managerId)}</select></label>
+        <label>Tempo de casa (anos)<input data-field="tenure" type="number" min="0" step="0.5" value="${esc(p.tenure ?? '')}"></label>
+        <div class="field">
+          <span class="field-label">Grupos / equipes</span>
+          <div class="chips">${chips(p.groups, 'groups')}<input id="group-input" list="groups-datalist" placeholder="digite e Enter" aria-label="Adicionar grupo"></div>
+          <datalist id="groups-datalist">${allGroups().map((g) => `<option value="${esc(g)}">`).join('')}</datalist>
+        </div>
+      </div>
+
+      <h4>Notas</h4>
+      <div class="ratings">${RATINGS.map((r) => ratingRow(p, r)).join('')}</div>
+      <p class="muted small">"?" = ainda não avaliado. Sem a posição informada, o sistema estima pela rede de relações.</p>
+
+      <h4>Conhecimentos / habilidades</h4>
+      <div class="chips">${chips(p.skills, 'skills')}<input id="skill-input" list="skills-datalist" placeholder="ex.: ERP, carteira sul — Enter" aria-label="Adicionar habilidade"></div>
+      <datalist id="skills-datalist">${[...new Set(data().people.flatMap((x) => x.skills || []))].map((s) => `<option value="${esc(s)}">`).join('')}</datalist>
+
+      <h4>Vínculos (${links.length})</h4>
+      <div class="link-add">
+        <input id="link-person" list="people-datalist" placeholder="Com quem? (nome)" aria-label="Pessoa">
+        <datalist id="people-datalist">${others.map((x) => `<option value="${esc(x.name)}">${esc(depName(x.departmentId))}</option>`).join('')}</datalist>
+        <select id="link-type" aria-label="Tipo">${typeOptions(fichaLinkDefaults.type)}</select>
+        <select id="link-strength" aria-label="Força" title="Força / frequência">${options([1, 2, 3, 4, 5].map((v) => [v, 'força ' + v]), fichaLinkDefaults.strength)}</select>
+        <select id="link-sent" aria-label="Sentimento">${options(SENTIMENT_OPTIONS, fichaLinkDefaults.sentiment)}</select>
+        <button class="primary" data-action="link-add">Adicionar vínculo</button>
+      </div>
+      ${links.length ? `<div class="table-wrap"><table class="links"><thead><tr><th>Pessoa</th><th>Tipo</th><th>Força</th><th>Sentimento</th><th></th></tr></thead><tbody>${linkRows}</tbody></table></div>` : '<p class="muted small">Nenhum vínculo ainda. Digite um nome acima — se a pessoa não existir, ela é criada.</p>'}
+
+      <label>Observações<textarea data-field="notes" rows="2">${esc(p.notes)}</textarea></label>
+
+      <div class="btn-row">
+        <button data-action="open-ficha" data-id="${esc(ids[idx - 1] || '')}" ${idx > 0 ? '' : 'disabled'}>← Anterior</button>
+        <button data-action="open-ficha" data-id="${esc(ids[idx + 1] || '')}" ${idx < ids.length - 1 ? '' : 'disabled'}>Próximo →</button>
+        <button data-action="new-person">+ Novo colaborador</button>
+        <span class="spacer"></span>
+        <button data-action="select-person" data-id="${esc(p.id)}">Ver no mapa</button>
+        <button class="danger" data-action="delete-person" data-id="${esc(p.id)}">Excluir</button>
+      </div>
+    </div>`;
+  }
+
+  const fichaLinkDefaults = { type: 'colaboracao', strength: 3, sentiment: '' };
+
+  // Salva uma alteração da ficha sem recarregar a tela inteira.
+  function updatePerson(patch, rerenderFicha) {
+    S.upsert('people', { id: fichaId, ...patch }, 'p', { silent: true });
+    afterSilentEdit(rerenderFicha);
+  }
+
+  function afterSilentEdit(rerenderFicha) {
+    recompute();
+    renderCadList();
+    if (rerenderFicha) renderFicha();
+  }
+
+  function openFicha(id, focusName) {
+    fichaId = id || null;
+    peopleTableMode = false;
+    if (currentView !== 'colaboradores') setView('colaboradores');
+    else renderColaboradores();
+    if (focusName) {
+      const n = $('.ficha-name');
+      if (n) n.focus();
+    } else window.scrollTo({ top: 0 });
+  }
+
+  function newPerson(name) {
+    const cur = fichaId && person(fichaId);
+    const p = S.upsert(
+      'people',
+      { name: name || '', role: '', departmentId: cur ? cur.departmentId : null, level: 2, managerId: null, knowledge: 3, performance: null, engagement: null, stance: null, skills: [], groups: [], notes: '' },
+      'p',
+      { silent: true }
+    );
+    recompute();
+    return p;
+  }
+
+  function findPersonByName(name) {
+    const q = name.trim().toLowerCase();
+    if (!q) return null;
+    const exact = data().people.find((p) => (p.name || '').toLowerCase() === q);
+    if (exact) return exact;
+    const partial = data().people.filter((p) => (p.name || '').toLowerCase().includes(q));
+    return partial.length === 1 ? partial[0] : null;
+  }
+
+  function addLinkFromFicha() {
+    const name = $('#link-person').value.trim();
+    if (!name) return toast('Digite o nome da pessoa.');
+    let other = findPersonByName(name);
+    if (other && other.id === fichaId) return toast('Escolha outra pessoa.');
+    if (!other) {
+      if (!confirm(`"${name}" ainda não está cadastrado(a). Criar agora?`)) return;
+      const keep = fichaId;
+      other = newPerson(name);
+      fichaId = keep;
+    }
+    fichaLinkDefaults.type = $('#link-type').value;
+    fichaLinkDefaults.strength = Number($('#link-strength').value);
+    fichaLinkDefaults.sentiment = $('#link-sent').value;
+    const dup = data().relations.find(
+      (r) => r.type === fichaLinkDefaults.type && ((r.source === fichaId && r.target === other.id) || (!(A.RELATION_TYPES[r.type] || {}).directed && r.source === other.id && r.target === fichaId))
+    );
+    if (dup) return toast('Esse vínculo já existe — ajuste-o na lista.');
+    S.upsert(
+      'relations',
+      {
+        source: fichaId,
+        target: other.id,
+        type: fichaLinkDefaults.type,
+        strength: fichaLinkDefaults.strength,
+        sentiment: fichaLinkDefaults.sentiment === '' ? null : Number(fichaLinkDefaults.sentiment),
+        notes: '',
+      },
+      'r',
+      { silent: true }
+    );
+    afterSilentEdit(true);
+    const inp = $('#link-person');
+    if (inp) inp.focus();
+    toast(`Vínculo com ${other.name} adicionado.`);
+  }
+
+  function addChip(kind, value) {
+    const v = value.trim();
+    if (!v) return;
+    const p = person(fichaId);
+    const list = (p[kind] || []).slice();
+    if (!list.some((x) => x.toLowerCase() === v.toLowerCase())) list.push(v);
+    updatePerson({ [kind]: list }, true);
+    const inp = $(kind === 'groups' ? '#group-input' : '#skill-input');
+    if (inp) inp.focus();
+  }
+
+  function pasteList(text) {
+    const lines = text.split(/\r?\n/).map((l) => l.trim()).filter(Boolean);
+    if (!lines.length) return 0;
+    const d = JSON.parse(JSON.stringify(data()));
+    const depByName = new Map(d.departments.map((x) => [x.name.toLowerCase(), x]));
+    const existing = new Set(d.people.map((p) => (p.name || '').toLowerCase()));
+    let n = 0;
+    for (const line of lines) {
+      const [name, role = '', setor = '', grupos = ''] = line.split(/\t|;/).map((x) => x.trim());
+      if (!name || existing.has(name.toLowerCase())) continue;
+      let depId = null;
+      if (setor) {
+        let dd = depByName.get(setor.toLowerCase());
+        if (!dd) {
+          dd = { id: 'd' + Math.random().toString(36).slice(2, 9), name: setor, color: CLUSTER_PALETTE[d.departments.length % CLUSTER_PALETTE.length] };
+          d.departments.push(dd);
+          depByName.set(setor.toLowerCase(), dd);
+        }
+        depId = dd.id;
+      }
+      d.people.push({
+        id: 'p' + Math.random().toString(36).slice(2, 9),
+        name,
+        role,
+        departmentId: depId,
+        level: 2,
+        managerId: null,
+        knowledge: 3,
+        performance: null,
+        engagement: null,
+        stance: null,
+        skills: [],
+        groups: grupos.split('|').map((g) => g.trim()).filter(Boolean),
+        notes: '',
+      });
+      existing.add(name.toLowerCase());
+      n++;
+    }
+    S.replace(d);
+    return n;
+  }
+
+  function renderPeopleTable() {
     const rows = data().people.map((p) => ({ p, m: model.byId.get(p.id) }));
+    const grade = (v) => (v === null || v === undefined || v === '' ? '<span class="muted">—</span>' : esc(v));
     const cols = [
-      { key: 'name', label: 'Nome', sort: (r) => r.p.name, render: (r) => personLink(r.p.id) },
+      { key: 'name', label: 'Nome', sort: (r) => r.p.name, render: (r) => `<a href="#" data-action="open-ficha" data-id="${esc(r.p.id)}">${esc(r.p.name || '(sem nome)')}</a>` },
       { key: 'role', label: 'Cargo', sort: (r) => r.p.role || '', render: (r) => esc(r.p.role) },
-      { key: 'dep', label: 'Departamento', sort: (r) => depName(r.p.departmentId), render: (r) => esc(depName(r.p.departmentId)) },
-      { key: 'level', label: 'Nível', sort: (r) => Number(r.p.level) || 0, render: (r) => esc(A.LEVELS[r.p.level] || '') },
-      { key: 'mgr', label: 'Gestor', sort: (r) => (r.p.managerId ? pname(r.p.managerId) : ''), render: (r) => (r.p.managerId ? esc(pname(r.p.managerId)) : '—') },
-      { key: 'knowledge', label: 'Conhec.', sort: (r) => Number(r.p.knowledge) || 0, render: (r) => esc(r.p.knowledge ?? '') },
-      { key: 'stance', label: 'Posicionamento', sort: (r) => r.m.stance ?? -9, render: (r) => stanceBadge(r.m) },
+      { key: 'dep', label: 'Setor', sort: (r) => depName(r.p.departmentId), render: (r) => esc(depName(r.p.departmentId)) },
+      { key: 'groups', label: 'Grupos', sort: (r) => (r.p.groups || []).join(), render: (r) => esc((r.p.groups || []).join(', ')) },
+      { key: 'performance', label: 'Desemp.', sort: (r) => Number(r.p.performance) || 0, render: (r) => grade(r.p.performance) },
+      { key: 'knowledge', label: 'Conhec.', sort: (r) => Number(r.p.knowledge) || 0, render: (r) => grade(r.p.knowledge) },
+      { key: 'engagement', label: 'Engaj.', sort: (r) => Number(r.p.engagement) || 0, render: (r) => grade(r.p.engagement) },
+      { key: 'stance', label: 'Posição', sort: (r) => r.m.stance ?? -9, render: (r) => stanceBadge(r.m) },
+      { key: 'links', label: 'Vínculos', sort: (r) => linksOf(r.p.id).length, render: (r) => linksOf(r.p.id).length },
       { key: 'influence', label: 'Influência', sort: (r) => r.m.influence, render: (r) => `${bar(r.m.influence)} ${fx(r.m.influence)}` },
       { key: 'peso', label: 'Peso', sort: (r) => r.m.peso, render: (r) => `${bar(r.m.peso)} ${fx(r.m.peso)}` },
-      {
-        key: 'act', label: '', nosort: true,
-        render: (r) => `<button class="link" data-action="edit-person" data-id="${esc(r.p.id)}">editar</button>`,
-      },
     ];
     $('#people-table').innerHTML = data().people.length
       ? table('people', cols, rows, { key: 'peso', dir: 'desc' })
-      : emptyState('Cadastre as pessoas da empresa, uma a uma ou importando um CSV na aba Dados.');
+      : emptyState('Nenhum colaborador cadastrado.');
   }
 
-  function personForm(p) {
-    p = p || { level: 2, knowledge: 3, stance: null };
-    openModal(
-      p.id ? 'Editar pessoa' : 'Nova pessoa',
-      `
-      <label>Nome<input name="name" required value="${esc(p.name)}"></label>
-      <label>Cargo<input name="role" value="${esc(p.role)}"></label>
-      <div class="grid2">
-        <label>Departamento<select name="departmentId">${depOptions(p.departmentId)}</select></label>
-        <label>Nível hierárquico<select name="level">${options(Object.entries(A.LEVELS), p.level)}</select></label>
-      </div>
-      <div class="grid2">
-        <label>Gestor direto<select name="managerId">${peopleOptions(p.managerId, '—')}</select></label>
-        <label>Tempo de casa (anos)<input name="tenure" type="number" step="0.1" min="0" value="${esc(p.tenure ?? '')}"></label>
-      </div>
-      <div class="grid2">
-        <label>Conhecimento crítico (0–5)<select name="knowledge">${options([0, 1, 2, 3, 4, 5].map((v) => [v, v]), p.knowledge)}</select></label>
-        <label title="Em relação à pessoa focal (ex.: novo gerente geral)">Posicionamento<select name="stance">${options(STANCE_OPTIONS, p.stance ?? '')}</select></label>
-      </div>
-      <label>Habilidades / conhecimentos (separados por vírgula)<input name="skills" value="${esc((p.skills || []).join(', '))}" placeholder="ex.: ERP, carteira de clientes, fiscal"></label>
-      <label>Observações<textarea name="notes" rows="3">${esc(p.notes)}</textarea></label>`,
-      (f) => {
-        S.upsert(
-          'people',
-          {
-            id: p.id,
-            name: f.name.trim(),
-            role: f.role.trim(),
-            departmentId: f.departmentId || null,
-            level: Number(f.level),
-            managerId: f.managerId && f.managerId !== p.id ? f.managerId : null,
-            tenure: f.tenure === '' ? null : Number(f.tenure),
-            knowledge: Number(f.knowledge),
-            stance: f.stance === '' ? null : Number(f.stance),
-            skills: f.skills.split(',').map((s) => s.trim()).filter(Boolean),
-            notes: f.notes,
-          },
-          'p'
-        );
-        toast('Pessoa salva.');
-      },
-      p.id &&
-        (() => {
-          if (confirm(`Excluir ${p.name} e todas as suas relações?`)) {
-            if (selectedId === p.id) selectedId = null;
-            S.remove('people', p.id);
-            return true;
-          }
-          return false;
-        })
+  // --------------------------------------------------------------- PAINEL
+  let board = null;
+  const BOARD_ORDER = ['cuidado', 'trazer', 'influente', 'reter', 'cortar', 'aliado'];
+  const TONE_LABEL = {
+    critico: 'Risco crítico',
+    cuidado: 'Cuidado',
+    cortar: 'Pode cortar',
+    trazer: 'Trazer para o lado',
+    reter: 'Reter',
+    aliado: 'Aliado',
+    normal: 'Acompanhar',
+  };
+
+  function getBoard() {
+    if (!board) {
+      if (!ranking) ranking = A.impactRanking(data(), model);
+      board = A.decisionBoard(data(), model, ranking);
+    }
+    return board;
+  }
+
+  function renderPainel() {
+    const box = $('#painel');
+    if (data().people.length < 3) {
+      box.innerHTML = emptyState('Cadastre ao menos 3 colaboradores com vínculos para ver o painel de decisão.');
+      return;
+    }
+    if (!board && !ranking && data().people.length > 150) {
+      box.innerHTML = `<div class="card"><p>Empresa grande: o painel simula a saída de cada pessoa e pode levar alguns segundos.</p>
+        <button class="primary" data-action="build-board">Calcular painel</button></div>`;
+      return;
+    }
+    const b = getBoard();
+    const focalNote = model.focalId
+      ? ''
+      : '<p class="notice-inline">Defina a <strong>pessoa focal</strong> (o gerente geral) para calcular quem resiste, quem apoia e com quem ter cuidado.</p>';
+
+    const item = (cat, p) => {
+      const reasons = p.reasons[cat];
+      const pp = person(p.id);
+      return `<li>
+        <div class="row-top">${personLink(p.id)} <span class="muted small">${esc(pp.role || '')}${pp.role ? ' · ' : ''}${esc(depName(pp.departmentId))}</span></div>
+        <div class="small">${esc(reasons[0])}${reasons.length > 1 ? ` <span class="more" title="${esc(reasons.slice(1).join(' · '))}">+${reasons.length - 1}</span>` : ''}</div>
+      </li>`;
+    };
+    const cards = BOARD_ORDER.map((cat) => {
+      const info = A.DECISION_CATEGORIES[cat];
+      const list = b.lists[cat];
+      let extra = '';
+      if (cat === 'cortar') {
+        if (b.missingPerformance) extra += `<p class="small warn-text">${b.missingPerformance} pessoa(s) sem nota de desempenho — avalie na ficha para esta análise ficar confiável.</p>`;
+        if (b.lowImpactWithoutGrades.length) extra += `<p class="small muted">Baixo impacto de saída, mas sem notas: ${b.lowImpactWithoutGrades.map(personLink).join(', ')}</p>`;
+      }
+      return `<section class="board-card cat-${cat}">
+        <header><h3>${esc(info.label)} <span class="count">${list.length}</span></h3><p class="muted small">${esc(info.hint)}</p></header>
+        <ul>${list.map((p) => item(cat, p)).join('') || '<li class="muted small">Ninguém nesta categoria.</li>'}</ul>
+        ${extra}
+      </section>`;
+    }).join('');
+
+    const tableHtml = table(
+      'board',
+      [
+        { key: 'name', label: 'Pessoa', sort: (r) => pname(r.id), render: (r) => personLink(r.id) },
+        { key: 'dep', label: 'Setor', sort: (r) => depName(person(r.id).departmentId), render: (r) => esc(depName(person(r.id).departmentId)) },
+        { key: 'tone', label: 'Classificação', sort: (r) => BOARD_TONES.indexOf(r.tone), render: (r) => `<span class="tone tone-${r.tone}">${esc(TONE_LABEL[r.tone])}</span>` },
+        { key: 'action', label: 'O que fazer', nosort: true, render: (r) => `<span class="small">${esc(r.action)}</span>` },
+        { key: 'influence', label: 'Influência', render: (r) => `${bar(r.influence)} ${fx(r.influence)}` },
+        { key: 'exitCost', label: 'Custo de saída', render: (r) => `${bar(r.exitCost / 100, 'warn')} ${Math.round(r.exitCost)}` },
+        { key: 'performance', label: 'Desemp.', sort: (r) => r.performance ?? -1, render: (r) => (r.performance ?? '—') },
+        { key: 'stance', label: 'Posição', sort: (r) => r.stance ?? -9, render: (r) => stanceBadge(model.byId.get(r.id)) },
+      ],
+      b.people,
+      { key: 'tone', dir: 'asc' }
     );
+
+    box.innerHTML = `
+      <div class="card painel-top">
+        <label class="inline">Gerente / pessoa focal:
+          <select id="focal-select">${peopleOptions(model.focalId, 'Selecione…')}</select></label>
+        ${focalNote}
+      </div>
+      <div class="board">${cards}</div>
+      <div class="card">
+        <h3>Matriz de decisão</h3>
+        <p class="muted small">Horizontal: quanto custa perder a pessoa (conhecimento, influência, conexões, contágio, desempenho). Vertical: posição em relação ao gerente. Tamanho: influência. Passe o mouse para detalhes; clique para ver no mapa.</p>
+        ${matrixSvg(b)}
+      </div>
+      <div class="card">
+        <h3>Recomendação por pessoa</h3>
+        ${tableHtml}
+      </div>
+      <p class="muted small">Recomendações são apoio à decisão, não veredito. Antes de qualquer desligamento: feedback documentado, plano de melhoria e orientação jurídica. Vínculo familiar nunca é motivo de demissão.</p>`;
+  }
+  const BOARD_TONES = ['critico', 'cuidado', 'cortar', 'trazer', 'reter', 'aliado', 'normal'];
+
+  function matrixSvg(b) {
+    const W = 860;
+    const H = 440;
+    const m = { l: 72, r: 24, t: 40, b: 66 };
+    const maxCost = Math.max(40, ...b.people.map((p) => p.exitCost)) * 1.08;
+    const X = (v) => m.l + (v / maxCost) * (W - m.l - m.r);
+    // Margem de 0,3 acima e abaixo para os círculos nos extremos não serem cortados.
+    const Y = (v) => m.t + ((2.3 - v) / 4.6) * (H - m.t - m.b);
+    const cut = b.thresholds.hiCost;
+    const xt = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].filter((v) => v <= maxCost);
+    const yt = [
+      [2, '+2 apoia'],
+      [1, '+1'],
+      [0, '0'],
+      [-1, '−1'],
+      [-2, '−2 resiste'],
+    ];
+    const labelled = new Set(
+      b.people
+        .slice()
+        .sort((a, c) => c.influence - a.influence)
+        .slice(0, 8)
+        .map((p) => p.id)
+        .concat(b.people.filter((p) => p.tone === 'critico' || p.tone === 'cortar').map((p) => p.id))
+    );
+    const pts = b.people
+      .slice()
+      .sort((a, c) => c.influence - a.influence)
+      .map((p) => {
+        const cx = X(p.exitCost);
+        const cy = Y(p.stance === null ? 0 : Math.max(-2, Math.min(2, p.stance)));
+        const r = 5 + 10 * p.influence;
+        const first = pname(p.id).split(' ')[0];
+        return `<g class="pt" data-action="select-person" data-id="${esc(p.id)}" data-tip="${esc(
+          `${pname(p.id)} · ${depName(person(p.id).departmentId)}\nCusto de saída ${Math.round(p.exitCost)}/100 · posição ${p.stance === null ? '?' : fx(p.stance, 1)} · influência ${fx(p.influence)}\n${p.action}`
+        )}">
+          <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" class="dot-${p.stanceLabel}${p.stance === null ? ' hollow' : ''}"></circle>
+          <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${Math.max(r, 12).toFixed(1)}" class="hit"></circle>
+          ${labelled.has(p.id) ? `<text x="${(cx + r + 4).toFixed(1)}" y="${(cy + 4).toFixed(1)}" class="pt-label">${esc(first)}</text>` : ''}
+        </g>`;
+      })
+      .join('');
+    const legend = [
+      ['apoiador', 'apoiador'],
+      ['neutro', 'neutro'],
+      ['resistente', 'resistente'],
+    ]
+      .map(([k, l]) => `<span><i class="lg-dot dot-${k}"></i>${l}</span>`)
+      .join('');
+    return `<div class="matrix-wrap">
+      <svg viewBox="0 0 ${W} ${H}" class="matrix" role="img" aria-label="Matriz: custo de saída por posição em relação ao gerente">
+        <rect x="${X(cut)}" y="${Y(0)}" width="${X(maxCost) - X(cut)}" height="${Y(-2.3) - Y(0)}" class="zone-risk"></rect>
+        ${xt.map((v) => `<line x1="${X(v)}" x2="${X(v)}" y1="${Y(2.3)}" y2="${H - m.b}" class="grid"></line><text x="${X(v)}" y="${H - m.b + 16}" class="tick" text-anchor="middle">${v}</text>`).join('')}
+        ${yt.map(([v, l]) => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}" class="grid${v === 0 ? ' zero' : ''}"></line><text x="${m.l - 6}" y="${Y(v) + 4}" class="tick" text-anchor="end">${l}</text>`).join('')}
+        <line x1="${X(cut)}" x2="${X(cut)}" y1="${m.t}" y2="${H - m.b}" class="cut"></line>
+        <text x="${X(cut) + 4}" y="${H - m.b + 32}" class="tick">custo alto →</text>
+        <text x="${W - m.r}" y="${m.t - 12}" class="quad" text-anchor="end">↗ Pilares: reter e valorizar</text>
+        <text x="${m.l}" y="${m.t - 12}" class="quad">↖ Apoiadores de baixo custo de saída</text>
+        <text x="${W - m.r}" y="${H - 6}" class="quad" text-anchor="end">Risco crítico: cuidado ↘</text>
+        <text x="${m.l}" y="${H - 6}" class="quad">↙ Resistentes de baixo impacto</text>
+        <text x="${(m.l + W - m.r) / 2}" y="${H - 6}" class="axis" text-anchor="middle">Custo de saída (0–100)</text>
+        ${pts}
+      </svg>
+      <div class="matrix-tip" hidden></div>
+      <div class="legend">${legend}<span>tamanho = influência</span><span><i class="lg-dot hollow-lg"></i>posição desconhecida</span></div>
+    </div>`;
   }
 
   // ------------------------------------------------------ DEPARTAMENTOS
@@ -494,11 +926,11 @@
     const rows = model.departments;
     const cols = [
       {
-        key: 'name', label: 'Departamento',
+        key: 'name', label: 'Setor',
         render: (r) => `<i class="dot" style="background:${esc((dep(r.id) || {}).color)}"></i>${esc(r.name)}`,
       },
       { key: 'size', label: 'Pessoas' },
-      { key: 'density', label: 'Coesão interna', title: 'Densidade de laços dentro do departamento', render: (r) => `${bar(r.density)} ${pct(r.density)}` },
+      { key: 'density', label: 'Coesão interna', title: 'Densidade de laços dentro do setor', render: (r) => `${bar(r.density)} ${pct(r.density)}` },
       { key: 'openness', label: 'Abertura', title: '% dos laços que vão para outras áreas', render: (r) => `${bar(r.openness)} ${pct(r.openness)}` },
       { key: 'negativeTies', label: 'Conflitos' },
       { key: 'avgStance', label: 'Posic. médio', render: (r) => fx(r.avgStance, 1) },
@@ -508,22 +940,35 @@
     ];
     $('#dep-table').innerHTML = data().departments.length
       ? table('deps', cols, rows, { key: 'size', dir: 'desc' })
-      : emptyState('Crie os departamentos (ex.: Operações, Comercial, Financeiro).');
+      : emptyState('Crie os setores (ex.: Operações, Comercial, Financeiro).');
+    const gcols = [
+      { key: 'name', label: 'Grupo / equipe' },
+      { key: 'size', label: 'Pessoas' },
+      { key: 'members', label: 'Membros', nosort: true, render: (r) => r.members.map(personLink).join(', ') },
+      { key: 'density', label: 'Coesão interna', render: (r) => `${bar(r.density)} ${pct(r.density)}` },
+      { key: 'negativeTies', label: 'Conflitos' },
+      { key: 'avgPerformance', label: 'Desempenho médio', render: (r) => fx(r.avgPerformance, 1) },
+      { key: 'avgStance', label: 'Posição média', render: (r) => fx(r.avgStance, 1) },
+      { key: 'influence', label: 'Influência total', render: (r) => fx(r.influence) },
+    ];
+    $('#group-table').innerHTML = model.groups.length
+      ? table('groups', gcols, model.groups, { key: 'size', dir: 'desc' })
+      : '<p class="muted">Nenhum grupo ainda. Adicione grupos/equipes na ficha de cada colaborador (ex.: Turno A, Projeto ERP, Comitê).</p>';
   }
 
   function depForm(d) {
     d = d || { color: CLUSTER_PALETTE[data().departments.length % CLUSTER_PALETTE.length] };
     openModal(
-      d.id ? 'Editar departamento' : 'Novo departamento',
+      d.id ? 'Editar setor' : 'Novo setor',
       `<label>Nome<input name="name" required value="${esc(d.name)}"></label>
        <label>Cor<input name="color" type="color" value="${esc(d.color)}"></label>`,
       (f) => {
         S.upsert('departments', { id: d.id, name: f.name.trim(), color: f.color }, 'd');
-        toast('Departamento salvo.');
+        toast('Setor salvo.');
       },
       d.id &&
         (() => {
-          if (confirm(`Excluir o departamento ${d.name}? As pessoas ficarão sem departamento.`)) {
+          if (confirm(`Excluir o setor ${d.name}? As pessoas ficarão sem setor.`)) {
             S.remove('departments', d.id);
             return true;
           }
@@ -654,7 +1099,7 @@
 
     const rankingCols = [
       { key: 'name', label: 'Pessoa', sort: (r) => r.name, render: (r) => personLink(r.id) },
-      { key: 'dep', label: 'Depto', sort: (r) => depName(r.departmentId), render: (r) => esc(depName(r.departmentId)) },
+      { key: 'dep', label: 'Setor', sort: (r) => depName(r.departmentId), render: (r) => esc(depName(r.departmentId)) },
       { key: 'influence', label: 'Influência', title: 'PageRank + intermediação + força dos laços', render: (r) => `${bar(r.influence)} ${fx(r.influence)}` },
       { key: 'peso', label: 'Peso', title: 'Influência + conhecimento + posição formal', render: (r) => `${bar(r.peso)} ${fx(r.peso)}` },
       { key: 'pagerank', label: 'PageRank', render: (r) => fx(r.pagerank, 3) },
@@ -689,7 +1134,7 @@
 
       <div class="card">
         <h3>Clusters (grupos informais)</h3>
-        <p class="muted small">Detectados pelo algoritmo de Louvain sobre os laços positivos. Clusters que misturam departamentos mostram onde o trabalho realmente acontece; um cluster com posicionamento médio negativo é um foco de resistência.</p>
+        <p class="muted small">Detectados pelo algoritmo de Louvain sobre os laços positivos. Clusters que misturam setores mostram onde o trabalho realmente acontece; um cluster com posicionamento médio negativo é um foco de resistência.</p>
         <div class="cards">${model.communities
           .map(
             (c) => `<div class="mini-card" style="border-left-color:${CLUSTER_PALETTE[c.id % CLUSTER_PALETTE.length]}">
@@ -823,7 +1268,7 @@
         <p class="muted small">Origem: <em>informado</em> (avaliação sua), <em>relação direta</em> (sentimento das relações com a focal), <em>ocorrências</em> (fatos registrados) ou <em>inferido</em> (média da vizinhança — confirme antes de agir).</p>
         ${table('stance', [
           { key: 'name', label: 'Pessoa', sort: (r) => r.name, render: (r) => personLink(r.id) },
-          { key: 'dep', label: 'Depto', sort: (r) => depName(r.departmentId), render: (r) => esc(depName(r.departmentId)) },
+          { key: 'dep', label: 'Setor', sort: (r) => depName(r.departmentId), render: (r) => esc(depName(r.departmentId)) },
           { key: 'stance', label: 'Posicionamento', sort: (r) => r.stance ?? -9, render: (r) => stanceBadge(r) },
           { key: 'influence', label: 'Influência', render: (r) => `${bar(r.influence)} ${fx(r.influence)}` },
           { key: 'exposure', label: 'Exposição', title: 'Média do posicionamento dos vizinhos', render: (r) => fx(r.exposure, 1) },
@@ -971,9 +1416,76 @@
   }
 
   // --------------------------------------------------------------- DADOS
+  // ------------------------------------------------- GITHUB (armazenamento)
+  const G = window.GitHubSync;
+  const SYNC_LABEL = {
+    local: ['warn', 'Salvo só neste navegador'],
+    loading: ['busy', 'Carregando do GitHub…'],
+    dirty: ['busy', 'Alterações pendentes…'],
+    saving: ['busy', 'Salvando no GitHub…'],
+    saved: ['ok', 'Salvo no GitHub'],
+    error: ['bad', 'Erro ao salvar no GitHub'],
+  };
+
+  function renderSyncStatus() {
+    const el = $('#sync-status');
+    const [tone, label] = SYNC_LABEL[G.status] || SYNC_LABEL.local;
+    const time = G.status === 'saved' && G.state.savedAt ? ' · ' + new Date(G.state.savedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
+    el.className = 'sync-status s-' + tone;
+    el.innerHTML = `<i></i>${esc(label + time)}`;
+    el.title = G.error || (G.connected ? `${G.cfg.owner}/${G.cfg.repo} · ${G.cfg.path}` : 'Configure o GitHub na aba Dados para salvar online');
+    if (currentView === 'dados') renderGitHubCard();
+  }
+
+  function renderGitHubCard() {
+    const box = $('#gh-card');
+    if (!box) return;
+    if (G.connected) {
+      const c = G.cfg;
+      box.innerHTML = `
+        <h3>Armazenamento no GitHub <span class="badge st-apoiador">conectado</span></h3>
+        <p>Os dados são lidos e gravados em <strong>${esc(c.owner)}/${esc(c.repo)}</strong> → <code>${esc(c.path)}</code>${c.branch ? ` (branch ${esc(c.branch)})` : ''}. Cada gravação vira uma versão no histórico.</p>
+        <p class="small">Status: <strong>${esc((SYNC_LABEL[G.status] || [])[1] || '')}</strong>${G.error ? ` — <span class="neg-text">${esc(G.error)}</span>` : ''}</p>
+        <div class="btn-row">
+          <button class="primary" data-action="gh-save">Salvar agora</button>
+          <button data-action="gh-reload">Recarregar do GitHub</button>
+          <a class="button" href="${esc(G.historyUrl())}" target="_blank" rel="noopener">Ver histórico de versões</a>
+        </div>
+        <h4>Acesso sem login para outra pessoa</h4>
+        <p class="muted small">Gere um link e envie por um canal privado (ex.: WhatsApp direto). Quem abrir o link já entra conectado, sem senha. <strong>Quem tiver o link pode ler e alterar os dados</strong> — para revogar, apague a chave no GitHub e gere outra.</p>
+        <div class="btn-row"><button data-action="gh-link">Gerar link de acesso</button></div>
+        <div id="gh-link-box"></div>
+        <h4>Este navegador</h4>
+        <div class="btn-row"><button class="danger" data-action="gh-disconnect">Desconectar este navegador</button></div>`;
+      return;
+    }
+    box.innerHTML = `
+      <h3>Armazenamento no GitHub <span class="badge warn">não configurado</span></h3>
+      <p>Hoje os dados estão salvos só neste navegador. Conecte a um repositório <strong>privado</strong> do GitHub para gravar e ler os dados de qualquer computador, sem banco de dados e sem login.</p>
+      <details class="steps">
+        <summary>Passo a passo (5 minutos, uma única vez)</summary>
+        <ol>
+          <li>Crie um repositório <strong>privado</strong> só para os dados, por exemplo <code>mapa_organizacional_dados</code>: <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a> → marque <em>Private</em> → marque <em>Add a README file</em>.</li>
+          <li>Crie uma chave de acesso: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained token</a> → <em>Repository access: Only select repositories</em> → escolha o repositório de dados → <em>Permissions → Contents: Read and write</em> → defina uma validade → <em>Generate token</em>.</li>
+          <li>Cole a chave abaixo e clique em <em>Conectar</em>.</li>
+        </ol>
+        <p class="muted small">A chave só dá acesso ao repositório de dados, não à sua conta. Ela fica guardada apenas neste navegador.</p>
+      </details>
+      <div class="grid2">
+        <label>Dono (usuário ou organização)<input id="gh-owner" value="${esc((G.cfg && G.cfg.owner) || 'brunovanham')}"></label>
+        <label>Repositório de dados (privado)<input id="gh-repo" value="${esc((G.cfg && G.cfg.repo) || 'mapa_organizacional_dados')}"></label>
+        <label>Arquivo<input id="gh-path" value="${esc((G.cfg && G.cfg.path) || 'dados/organizacao.json')}"></label>
+        <label>Branch <span class="muted">(vazio = padrão)</span><input id="gh-branch" value="${esc((G.cfg && G.cfg.branch) || '')}"></label>
+      </div>
+      <label>Chave de acesso (token)<input id="gh-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+      <div class="btn-row"><button class="primary" data-action="gh-connect">Conectar</button></div>
+      ${G.error ? `<p class="neg-text small">${esc(G.error)}</p>` : ''}`;
+  }
+
   function renderData() {
     const s = data().settings;
     $('#data-panel').innerHTML = `
+      <div class="card gh" id="gh-card"></div>
       <div class="grid2">
         <div class="card">
           <h3>Configurações</h3>
@@ -985,13 +1497,13 @@
         </div>
         <div class="card">
           <h3>Backup e importação</h3>
-          <p class="muted small">Os dados ficam apenas neste navegador (localStorage). Exporte com frequência e guarde o arquivo em local protegido.</p>
+          <p class="muted small">Cópia de segurança manual em arquivo. Os dados também ficam em cache neste navegador; com o GitHub conectado, cada gravação vira uma versão no histórico.</p>
           <div class="btn-row">
             <button data-action="export">Exportar JSON</button>
             <label class="button">Importar JSON<input type="file" id="import-json" accept=".json,application/json" hidden></label>
           </div>
           <h4>Importar pessoas via CSV</h4>
-          <p class="muted small">Colunas (separador <code>;</code> ou <code>,</code>): <code>nome;cargo;departamento;nivel;gestor;conhecimento;habilidades</code>. Gestor pelo nome; habilidades separadas por <code>|</code>. Departamentos inexistentes são criados.</p>
+          <p class="muted small">Colunas (separador <code>;</code> ou <code>,</code>): <code>nome;cargo;setor;nivel;gestor;conhecimento;desempenho;engajamento;grupos;habilidades</code> (só <code>nome</code> é obrigatória). Gestor pelo nome; grupos e habilidades separados por <code>|</code>. Setores inexistentes são criados.</p>
           <label class="button">Importar CSV<input type="file" id="import-csv" accept=".csv,text/csv" hidden></label>
           <h4>Outros</h4>
           <div class="btn-row">
@@ -1007,8 +1519,10 @@
           <li>Use o mapa para <strong>entender e agir sobre comportamentos</strong> — não como prova. Decisões disciplinares devem se apoiar em fatos documentados (aba Ocorrências), feedback prévio e orientação jurídica trabalhista.</li>
           <li>Casamento ou parentesco <strong>não</strong> é motivo de desligamento. O que se trata é conduta (boicote, descumprimento) e conflito de interesses (política de parentes, linhas de reporte separadas).</li>
           <li>Posicionamentos "inferidos" são hipóteses do algoritmo. Confirme com observação e conversa antes de agir.</li>
+          <li>Guarde os dados num repositório <strong>privado</strong>. Este aplicativo é público, mas sem a chave de acesso ninguém vê os dados.</li>
         </ul>
       </div>`;
+    renderGitHubCard();
   }
 
   function importCSV(text) {
@@ -1027,7 +1541,7 @@
     for (const row of rows) {
       const name = col(row, 'nome');
       if (!name) continue;
-      let depName_ = col(row, 'departamento');
+      let depName_ = col(row, 'setor') || col(row, 'departamento');
       let depId = null;
       if (depName_) {
         let dd = depByName.get(depName_.toLowerCase());
@@ -1046,6 +1560,9 @@
         level: Number(col(row, 'nivel')) || 2,
         knowledge: Number(col(row, 'conhecimento')) || 3,
         skills: col(row, 'habilidades').split('|').map((s) => s.trim()).filter(Boolean),
+        groups: col(row, 'grupos').split('|').map((s) => s.trim()).filter(Boolean),
+        performance: Number(col(row, 'desempenho')) || null,
+        engagement: Number(col(row, 'engajamento')) || null,
         stance: null,
         managerId: null,
         _mgr: col(row, 'gestor'),
@@ -1107,7 +1624,93 @@
     },
     'select-person': (id) => selectPerson(id),
     'close-detail': () => selectPerson(null),
-    'edit-person': (id) => personForm(person(id)),
+    'edit-person': (id) => openFicha(id),
+    'open-ficha': (id) => id && openFicha(id),
+    'new-person': () => {
+      const p = newPerson('');
+      openFicha(p.id, true);
+    },
+    'delete-person': (id) => {
+      if (!confirm(`Excluir ${pname(id)} e todos os seus vínculos?`)) return;
+      if (selectedId === id) selectedId = null;
+      fichaId = null;
+      S.remove('people', id);
+    },
+    rate: (_, el) => {
+      const v = el.dataset.value;
+      updatePerson({ [el.dataset.field]: v === '' ? null : Number(v) }, true);
+    },
+    'chip-del': (value, el) => {
+      const kind = el.dataset.kind;
+      updatePerson({ [kind]: (person(fichaId)[kind] || []).filter((x) => x !== value) }, true);
+    },
+    'link-add': () => addLinkFromFicha(),
+    'rel-del': (id) => {
+      S.remove('relations', id, { silent: true });
+      afterSilentEdit(true);
+    },
+    'rel-flip': (id) => {
+      const r = data().relations.find((x) => x.id === id);
+      S.upsert('relations', { id, source: r.target, target: r.source }, 'r', { silent: true });
+      afterSilentEdit(true);
+    },
+    'toggle-people-table': () => {
+      peopleTableMode = !peopleTableMode;
+      renderColaboradores();
+    },
+    'paste-add': () => {
+      const n = pasteList($('#paste-list').value);
+      $('#paste-list').value = '';
+      toast(`${n} colaborador(es) adicionado(s).`);
+    },
+    'gh-connect': async () => {
+      const cfg = { owner: $('#gh-owner').value, repo: $('#gh-repo').value, path: $('#gh-path').value, branch: $('#gh-branch').value, token: $('#gh-token').value };
+      if (!cfg.owner.trim() || !cfg.repo.trim() || !cfg.token.trim()) return toast('Preencha dono, repositório e chave de acesso.');
+      toast('Conectando ao GitHub…');
+      try {
+        const r = await G.connect(cfg);
+        toast(r === 'loaded' ? 'Conectado. Dados carregados do GitHub.' : 'Conectado. Dados enviados ao GitHub.');
+      } catch (e) {
+        G.setStatus('local', e.message);
+        toast(e.message);
+      }
+      renderGitHubCard();
+    },
+    'gh-save': async () => {
+      G.saveState({ dirty: true });
+      await G.push();
+      toast(G.status === 'saved' ? 'Salvo no GitHub.' : G.error || 'Não foi possível salvar.');
+    },
+    'gh-reload': async () => {
+      if (G.state.dirty && !confirm('Há alterações ainda não enviadas. Recarregar do GitHub e descartá-las?')) return;
+      await G.pull();
+      toast(G.status === 'saved' ? 'Dados recarregados do GitHub.' : G.error);
+    },
+    'gh-link': () => {
+      const link = G.accessLink();
+      $('#gh-link-box').innerHTML = `<div class="link-box"><input id="gh-link-input" readonly value="${esc(link)}"><button data-action="gh-copy">Copiar</button></div>
+        <p class="muted small">O link funciona no endereço onde o sistema está publicado. Envie só para quem pode ver estes dados.</p>`;
+      $('#gh-link-input').select();
+    },
+    'gh-copy': async () => {
+      const inp = $('#gh-link-input');
+      try {
+        await navigator.clipboard.writeText(inp.value);
+      } catch (e) {
+        inp.select();
+        document.execCommand('copy');
+      }
+      toast('Link copiado.');
+    },
+    'gh-disconnect': () => {
+      if (!confirm('Desconectar este navegador do GitHub? Os dados no GitHub continuam lá; aqui fica apenas a cópia local.')) return;
+      G.disconnect();
+      renderGitHubCard();
+    },
+    'build-board': () => {
+      getBoard();
+      renderPainel();
+    },
     'edit-dep': (id) => depForm(dep(id)),
     'edit-rel': (id) => relationForm(data().relations.find((r) => r.id === id)),
     'new-rel-from': (id) => relationForm({ source: id, type: 'colaboracao', strength: 3, sentiment: null }),
@@ -1139,7 +1742,7 @@
       renderSimulation();
     },
     'run-ranking': () => {
-      ranking = A.impactRanking(data(), model);
+      ranking = ranking || A.impactRanking(data(), model);
       renderSimulation();
     },
     'bulk-add': () => {
@@ -1177,7 +1780,8 @@
       toast('Exemplo fictício carregado.');
     },
     'clear-all': () => {
-      if (!confirm('Apagar TODOS os dados deste navegador? Esta ação não pode ser desfeita.')) return;
+      const where = G.connected ? ' (também no GitHub — a versão anterior fica no histórico)' : '';
+      if (!confirm(`Apagar TODOS os dados${where}?`)) return;
       selectedId = null;
       S.reset();
       toast('Dados apagados.');
@@ -1194,6 +1798,27 @@
 
   document.addEventListener('change', (e) => {
     const t = e.target;
+    if (t.closest('#ficha') && t.dataset.field && fichaId) {
+      const f = t.dataset.field;
+      let v = t.value;
+      if (f === 'departmentId' && v === '__new') {
+        const name = (prompt('Nome do novo setor:') || '').trim();
+        if (!name) return renderFicha();
+        const d = S.upsert('departments', { name, color: CLUSTER_PALETTE[data().departments.length % CLUSTER_PALETTE.length] }, 'd', { silent: true });
+        return updatePerson({ departmentId: d.id }, true);
+      }
+      if (f === 'level') v = Number(v);
+      else if (f === 'tenure') v = v === '' ? null : Number(v);
+      else if (f === 'departmentId' || f === 'managerId') v = v || null;
+      else v = v.trim();
+      return updatePerson({ [f]: v }, f === 'departmentId');
+    }
+    if (t.dataset.rel) {
+      const f = t.dataset.relfield;
+      const v = f === 'type' ? t.value : t.value === '' ? null : Number(t.value);
+      S.upsert('relations', { id: t.dataset.rel, [f]: v }, 'r', { silent: true });
+      return afterSilentEdit(true);
+    }
     if (t.classList.contains('sim-chk')) {
       if (t.checked) simSelection.add(t.value);
       else simSelection.delete(t.value);
@@ -1232,6 +1857,36 @@
   });
 
   $('#rel-filter').addEventListener('input', () => renderRelations());
+  $('#cad-search').addEventListener('input', () => renderCadList());
+  document.addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    const id = e.target.id;
+    if (id === 'group-input' || id === 'skill-input') {
+      e.preventDefault();
+      addChip(id === 'group-input' ? 'groups' : 'skills', e.target.value);
+    } else if (id === 'link-person') {
+      e.preventDefault();
+      addLinkFromFicha();
+    } else if (e.target.classList.contains('ficha-name')) {
+      e.target.blur();
+    }
+  });
+  // Dica (tooltip) da matriz de decisão.
+  document.addEventListener('mousemove', (e) => {
+    const tip = $('.matrix-tip');
+    if (!tip) return;
+    const g = e.target.closest && e.target.closest('.pt');
+    if (!g) {
+      tip.hidden = true;
+      return;
+    }
+    const wrap = tip.parentElement.getBoundingClientRect();
+    tip.textContent = g.dataset.tip;
+    tip.hidden = false;
+    const x = Math.min(e.clientX - wrap.left + 14, wrap.width - tip.offsetWidth - 4);
+    tip.style.left = Math.max(0, x) + 'px';
+    tip.style.top = e.clientY - wrap.top + 14 + 'px';
+  });
   $('#map-search').addEventListener('input', (e) => {
     const q = e.target.value.trim().toLowerCase();
     if (!q) return highlight(selectedId);
@@ -1242,7 +1897,6 @@
     const b = e.target.closest('button[data-view]');
     if (b) setView(b.dataset.view);
   });
-  $('#add-person').onclick = () => personForm();
   $('#add-dep').onclick = () => depForm();
   $('#add-rel').onclick = () => relationForm();
   $('#add-inc').onclick = () => incidentForm();
@@ -1254,5 +1908,15 @@
     render();
   });
   recompute();
-  render();
+  setView(data().people.length ? 'painel' : 'colaboradores');
+  G.init(S, {
+    onStatus: renderSyncStatus,
+    confirm: (msg) => confirm(msg),
+    onRemoteLoaded: () => {
+      selectedId = null;
+      lastLayoutKey = '';
+      if (fichaId && !person(fichaId)) fichaId = null;
+    },
+  });
+  renderSyncStatus();
 })();

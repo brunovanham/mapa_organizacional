@@ -117,3 +117,43 @@ test('rede vazia não quebra', () => {
   assert.equal(m.n, 0);
   assert.equal(m.focal, null);
 });
+
+test('painel de decisão: classifica cuidado, reter e cortar no exemplo', () => {
+  const m = A.analyze(SAMPLE);
+  const b = A.decisionBoard(SAMPLE, m);
+  const ids = (cat) => b.lists[cat].map((p) => p.id);
+  assert.ok(ids('cuidado').includes('rs') && ids('cuidado').includes('js'));
+  assert.ok(ids('reter').includes('gu'), 'analista com ERP exclusivo é risco de demissão');
+  assert.deepEqual(ids('cortar'), ['ig']);
+  assert.ok(ids('aliado').includes('fr'));
+  assert.equal(b.people.find((p) => p.id === 'rs').tone, 'critico');
+  assert.ok(!b.people.some((p) => p.id === SAMPLE.settings.focalId), 'a pessoa focal não é classificada');
+});
+
+test('painel de decisão: sem nota de desempenho ninguém é sugerido para corte', () => {
+  const people = ['f', 'a', 'b', 'c', 'd'].map((id) => person(id));
+  const rels = [rel('f', 'a'), rel('a', 'b'), rel('b', 'c'), rel('c', 'd'), rel('d', 'f')];
+  const d = base(people, rels, { focalId: 'f' });
+  const b = A.decisionBoard(d, A.analyze(d));
+  assert.equal(b.lists.cortar.length, 0);
+  assert.equal(b.missingPerformance, 4);
+  d.people[2].performance = 1;
+  d.people[2].engagement = 1;
+  const b2 = A.decisionBoard(d, A.analyze(d));
+  assert.ok(b2.people.find((p) => p.id === 'b').reasons.cortar || b2.people.find((p) => p.id === 'b').reasons.reter);
+});
+
+test('desempenho alto aumenta o custo de saída', () => {
+  const mk = (perf) => {
+    const people = ['a', 'b', 'c'].map((id) => person(id));
+    people[0].performance = perf;
+    return base(people, [rel('a', 'b'), rel('b', 'c'), rel('a', 'c')]);
+  };
+  assert.ok(A.simulateRemoval(mk(5), ['a']).operationalCost > A.simulateRemoval(mk(1), ['a']).operationalCost);
+});
+
+test('grupos transversais aparecem nas estatísticas', () => {
+  const m = A.analyze(SAMPLE);
+  const erp = m.groups.find((g) => g.name === 'Projeto ERP');
+  assert.ok(erp && erp.members.includes('gu') && erp.size === 4);
+});

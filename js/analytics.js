@@ -68,6 +68,9 @@
     return arr.map((v) => (max > 0 ? v / max : 0));
   };
   const normSkill = (s) => String(s).trim().toLowerCase();
+  // Nota de 1 a 5; vazio = não avaliado (null).
+  const grade = (v) => (v === null || v === undefined || v === '' || Number.isNaN(Number(v)) ? null : clamp(Number(v), 1, 5));
+  const personGroups = (p) => [...new Set((p.groups || []).map((x) => String(x).trim()).filter(Boolean))];
 
   function sentimentOf(r) {
     const t = RELATION_TYPES[r.type] || RELATION_TYPES.colaboracao;
@@ -559,6 +562,10 @@
       influence: influence[i],
       knowledgeRisk: knowledgeRisk[i],
       uniqueSkills: uniqueSkills[i],
+      knowledge: clamp(Number(p.knowledge) || 0, 0, 5),
+      performance: grade(p.performance),
+      engagement: grade(p.engagement),
+      groups: personGroups(p),
       formal: formal[i],
       peso: peso[i],
       community: comm[i],
@@ -590,9 +597,8 @@
       c.avgStance = st.length ? sum(st) / st.length : null;
     }
 
-    // Departamentos
-    const departments = (data.departments || []).map((d) => {
-      const mem = g.people.map((p, i) => [p, i]).filter(([p]) => p.departmentId === d.id);
+    // Setores (departamentos) e grupos
+    const setStats = (id, name, mem) => {
       const set = new Set(mem.map(([, i]) => i));
       let internal = 0;
       let external = 0;
@@ -611,25 +617,34 @@
       internal /= 2;
       const size = mem.length;
       const possible = (size * (size - 1)) / 2;
-      const st = mem.map(([, i]) => stance[i]).filter((s) => s !== null);
+      const st = mem.map(([, i]) => stance[i]).filter((v) => v !== null);
+      const perf = mem.map(([p]) => grade(p.performance)).filter((v) => v !== null);
       const connectors = [...extBy.entries()]
         .sort((a, b) => b[1] - a[1])
         .slice(0, 3)
         .map(([i, c]) => ({ id: g.people[i].id, external: c }));
       return {
-        id: d.id,
-        name: d.name,
+        id,
+        name,
         size,
+        members: mem.map(([p]) => p.id),
         density: possible ? internal / possible : 0,
         internalTies: internal,
         externalTies: external,
         openness: internal + external ? external / (internal + external) : 0,
         negativeTies: negative,
         avgStance: st.length ? sum(st) / st.length : null,
+        avgPerformance: perf.length ? sum(perf) / perf.length : null,
         influence: sum(mem.map(([, i]) => influence[i])),
         connectors,
       };
-    });
+    };
+    const indexed = g.people.map((p, i) => [p, i]);
+    const departments = (data.departments || []).map((d) =>
+      setStats(d.id, d.name, indexed.filter(([p]) => p.departmentId === d.id))
+    );
+    const groupNames = [...new Set(g.people.flatMap(personGroups))].sort((a, b) => a.localeCompare(b));
+    const groups = groupNames.map((name) => setStats(name, name, indexed.filter(([p]) => personGroups(p).includes(name))));
 
     // Pares-chave (laços positivos mais estratégicos)
     const ebcVals = [...ebc.values()];
@@ -740,6 +755,7 @@
       largestComponent: Math.max(0, ...comps.sizes),
       density: n > 1 ? sum(ties) / 2 / ((n * (n - 1)) / 2) : 0,
       departments,
+      groups,
       keyPairs,
       conflicts,
       triads,
@@ -979,7 +995,11 @@
     const s3 = Math.min(1, influenceShare * 3);
     const s4 = Math.min(1, (totalSkills ? (skillsLost.length / totalSkills) * 3 : 0) + maxKnowledgeRisk * 0.5);
     const s5 = Math.min(1, contagion.length / 5);
-    const operationalCost = 100 * (0.25 * s1 + 0.15 * s2 + 0.25 * s3 + 0.25 * s4 + 0.1 * s5);
+    // Desempenho: perder quem entrega muito custa mais. Sem nota, assume-se 3 (médio).
+    const perf = removedMetrics.map((m) => (m.performance === null ? 3 : m.performance));
+    const s6 = perf.length ? Math.max(0, Math.max(...perf) - 2) / 3 : 0;
+    const operationalCost =
+      100 * (0.2 * s1 + 0.1 * s2 + 0.2 * s3 + 0.25 * s4 + 0.1 * s5 + 0.15 * s6);
 
     return {
       removed: [...removed],
@@ -1002,7 +1022,7 @@
       focalReachBefore: before.focal ? before.focal.reach2Share : null,
       focalReachAfter: after.focal ? after.focal.reach2Share : null,
       operationalCost,
-      breakdown: { efficiency: s1, isolation: s2, influence: s3, knowledge: s4, contagion: s5 },
+      breakdown: { efficiency: s1, isolation: s2, influence: s3, knowledge: s4, contagion: s5, performance: s6 },
       after,
     };
   }
@@ -1023,6 +1043,151 @@
         };
       })
       .sort((a, b) => b.operationalCost - a.operationalCost);
+  }
+
+  // ------------------------------------------------ painel de decisão
+  const DECISION_CATEGORIES = {
+    cuidado: { label: 'Com quem ter cuidado', hint: 'Resistentes influentes, porteiros resistentes, conduta negativa registrada.' },
+    trazer: { label: 'Trazer para o seu lado', hint: 'Neutros influentes sob pressão e resistentes ainda recuperáveis.' },
+    influente: { label: 'Pessoas influentes', hint: 'Quem a rede realmente escuta, independentemente do cargo.' },
+    aliado: { label: 'Aliados', hint: 'Apoiadores com influência: multiplicadores das mudanças.' },
+    reter: { label: 'Demissão é risco', hint: 'Saída cara: conhecimento exclusivo, ponto de conexão, contágio ou alto desempenho.' },
+    cortar: { label: 'Onde é possível cortar', hint: 'Baixo impacto de saída somado a desempenho baixo, baixo engajamento ou conduta registrada.' },
+  };
+
+  const quantile = (sorted, q) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1)))] : 0);
+
+  /**
+   * Classifica cada pessoa nas perguntas do gerente: cuidado, trazer para o lado,
+   * influentes, aliados, demissão é risco e onde é possível cortar.
+   * `ranking` é o resultado de impactRanking (custo de saída individual).
+   */
+  function decisionBoard(data, model, ranking) {
+    ranking = ranking || impactRanking(data, model);
+    const F = model.focal;
+    const exit = new Map(ranking.map((r) => [r.id, r]));
+    const others = model.metrics.filter((m) => m.id !== model.focalId);
+    const costs = ranking.map((r) => r.operationalCost).sort((a, b) => a - b);
+    const infl = others.map((m) => m.influence).sort((a, b) => a - b);
+    const hiCost = Math.max(quantile(costs, 0.7), 1);
+    const loCost = quantile(costs, 0.35);
+    const hiInfl = Math.max(quantile(infl, 0.75), 0.35);
+    const medInfl = quantile(infl, 0.5);
+    const engageInfl = quantile(infl, 0.4);
+
+    const gate = new Map(F ? F.gatekeepers.map((g) => [g.id, g]) : []);
+    const nucleus = new Map();
+    if (F) F.nuclei.forEach((nu, i) => nu.members.forEach((id) => nucleus.set(id, { index: i, size: nu.members.length })));
+    const engageTop = new Set(F ? F.engagement.slice(0, Math.max(3, Math.ceil(others.length * 0.25))).map((e) => e.id) : []);
+    const incidents = (F && F.incidentsBy) || {};
+    const negIncidents = (id) => {
+      if (F) return (incidents[id] || {}).negative || 0;
+      let c = 0;
+      for (const ev of data.incidents || []) {
+        if ((INCIDENT_TYPES[ev.type] || {}).valence < 0 && (ev.actors || []).includes(id)) c++;
+      }
+      return c;
+    };
+
+    const people = others.map((m) => {
+      const r = exit.get(m.id) || { operationalCost: 0, contagion: 0, skillsLost: 0, resistanceReduction: 0 };
+      const reasons = {};
+      const add = (cat, text) => (reasons[cat] = reasons[cat] || []).push(text);
+      const neg = negIncidents(m.id);
+      const label = m.stanceLabel;
+
+      if (m.influence >= hiInfl) add('influente', `influência #${m.influenceRank} da empresa`);
+
+      if (label === 'resistente') {
+        if (m.influence >= medInfl) add('cuidado', 'resistente com influência acima da média');
+        const nu = nucleus.get(m.id);
+        if (nu && nu.size > 1) add('cuidado', `faz parte do núcleo de resistência ${nu.index + 1}`);
+        const gk = gate.get(m.id);
+        if (gk && gk.dependency >= 0.1) add('cuidado', `o gerente depende dele(a) para alcançar ${Math.round(gk.dependency * 100)}% da rede`);
+      }
+      if (neg >= 1) add('cuidado', `${neg} ocorrência(s) negativa(s) registrada(s)`);
+      if ((m.tension || 0) >= 3 && label !== 'apoiador') add('cuidado', `envolvido(a) em ${m.tension} tríades de tensão`);
+
+      if (label === 'neutro' && engageTop.has(m.id) && m.influence >= engageInfl) add('trazer', 'neutro(a) influente e exposto(a) à pressão dos resistentes');
+      if (label === 'resistente' && m.stance > -1.5 && neg === 0 && m.stanceSource !== 'informado')
+        add('trazer', 'resistência leve e sem ocorrências: ainda recuperável');
+      if (label === 'apoiador' && m.engagement !== null && m.engagement <= 2) add('trazer', 'apoia, mas está pouco engajado(a)');
+
+      if (label === 'apoiador' && m.influence >= medInfl) add('aliado', 'apoia a gestão e tem influência');
+
+      if (r.operationalCost >= hiCost) add('reter', `custo de saída alto (${Math.round(r.operationalCost)}/100)`);
+      if (m.uniqueSkills.length && m.knowledge >= 3) add('reter', `único(a) que domina: ${m.uniqueSkills.join(', ')}`);
+      if (m.articulation) add('reter', 'ponto único de conexão entre partes da rede');
+      if (r.contagion >= 3) add('reter', `${r.contagion} pessoas com laço forte podem sair junto`);
+      if (m.performance === 5 || (m.performance === 4 && reasons.reter)) add('reter', `alto desempenho (${m.performance}/5)`);
+
+      const lowImpact = r.operationalCost <= loCost && !m.articulation && !m.uniqueSkills.length && r.contagion <= 1 && !reasons.reter;
+      if (lowImpact) {
+        const why = [];
+        if (m.performance !== null && m.performance <= 2) why.push(`desempenho baixo (${m.performance}/5)`);
+        if (m.engagement !== null && m.engagement <= 2) why.push(`engajamento baixo (${m.engagement}/5)`);
+        if (neg >= 2) why.push(`${neg} ocorrências negativas documentadas`);
+        if (why.length) add('cortar', `baixo impacto de saída (${Math.round(r.operationalCost)}/100) e ${why.join(', ')}`);
+      }
+
+      const has = (c) => !!reasons[c];
+      let action;
+      let tone;
+      if (has('cuidado') && has('reter')) {
+        action = 'Risco crítico: resistente e difícil de substituir. Transfira o conhecimento e crie um backup antes de qualquer decisão; trate a conduta com feedback formal e documentado.';
+        tone = 'critico';
+      } else if (has('cuidado')) {
+        action = 'Atenção: conversas individuais, expectativas por escrito e registro de ocorrências. Evite que esta pessoa seja intermediária das mensagens do gerente.';
+        tone = 'cuidado';
+      } else if (has('cortar')) {
+        action = 'Baixo impacto de saída. Antes de cortar: feedback claro e plano de melhoria com prazo; decida com base no resultado e com apoio jurídico.';
+        tone = 'cortar';
+      } else if (has('trazer')) {
+        action = 'Engajar: inclua em decisões e projetos do gerente, dê visibilidade e reconhecimento.';
+        tone = 'trazer';
+      } else if (has('reter')) {
+        action = 'Reter: pessoa crítica. Reconheça, desenvolva e prepare um sucessor para reduzir a dependência.';
+        tone = 'reter';
+      } else if (has('aliado')) {
+        action = 'Aliado: use como multiplicador das mudanças e porta-voz junto às equipes.';
+        tone = 'aliado';
+      } else {
+        action = 'Acompanhar normalmente.';
+        tone = 'normal';
+      }
+
+      return {
+        id: m.id,
+        reasons,
+        categories: Object.keys(reasons),
+        action,
+        tone,
+        exitCost: r.operationalCost,
+        resistanceReduction: r.resistanceReduction,
+        influence: m.influence,
+        stance: m.stance,
+        stanceLabel: label,
+        performance: m.performance,
+        engagement: m.engagement,
+        lowImpact,
+      };
+    });
+
+    const lists = {};
+    for (const cat of Object.keys(DECISION_CATEGORIES)) {
+      lists[cat] = people
+        .filter((p) => p.reasons[cat])
+        .sort((a, b) =>
+          cat === 'cortar' ? a.exitCost - b.exitCost : cat === 'reter' ? b.exitCost - a.exitCost : b.influence - a.influence
+        );
+    }
+    return {
+      people,
+      lists,
+      thresholds: { hiCost, loCost, hiInfl, medInfl },
+      missingPerformance: others.filter((m) => m.performance === null).length,
+      lowImpactWithoutGrades: people.filter((p) => p.lowImpact && !p.reasons.cortar && p.performance === null).map((p) => p.id),
+    };
   }
 
   // --------------------------------------------------- recomendações
@@ -1123,6 +1288,8 @@
     simulateRemoval,
     impactRanking,
     recommendations,
+    decisionBoard,
+    DECISION_CATEGORIES,
     stanceLabel,
     sentimentOf,
     // expostos para testes

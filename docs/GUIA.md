@@ -120,6 +120,26 @@ alto custo operacional e alta resistência ao mesmo tempo.
 
 ---
 
+### Painel de decisão (regras)
+
+O custo de saída de cada pessoa vem da simulação individual. "Alto" significa estar entre os 30% mais caros
+da empresa, e "baixo" estar entre os 35% mais baratos.
+
+| Categoria | Entra quando… |
+|---|---|
+| **Com quem ter cuidado** | é resistente com influência acima da mediana, faz parte de um núcleo de resistência, é porteiro do gerente (≥ 10% da rede), tem ocorrência negativa registrada ou está em 3 ou mais tríades de tensão |
+| **Trazer para o seu lado** | é neutro, influente e está sob pressão dos resistentes; ou tem resistência leve, inferida e sem ocorrências (recuperável); ou apoia mas tem engajamento ≤ 2 |
+| **Pessoas influentes** | está entre os 25% mais influentes (índice ≥ 0,35) |
+| **Aliados** | apoia a gestão e tem influência acima da mediana |
+| **Demissão é risco** | tem custo de saída alto, é o único que domina um conhecimento (com conhecimento ≥ 3), é ponto único de conexão, tem 3 ou mais pessoas com laço forte que podem sair junto, ou tem desempenho 5 |
+| **Onde é possível cortar** | tem custo de saída baixo, sem conhecimento exclusivo, não é ponto de conexão, tem no máximo 1 laço forte **e** desempenho ≤ 2, engajamento ≤ 2 ou 2 ou mais ocorrências negativas documentadas |
+
+Sem nota de desempenho, ninguém é sugerido para corte: o painel avisa quantas pessoas ainda não foram avaliadas.
+O posicionamento inferido nunca leva alguém, sozinho, para a categoria de corte.
+
+O custo de saída combina: 20% perda de eficiência da rede, 10% pessoas isoladas, 20% influência,
+25% conhecimento, 10% contágio e 15% desempenho.
+
 ## 5. Como ler os resultados no cenário de boicote
 
 | O que o sistema mostra | Leitura | Ação |
@@ -184,10 +204,11 @@ alto custo operacional e alta resistência ao mesmo tempo.
 
 ## 8. Evolução sugerida (roadmap)
 
-1. **Questionário ONA integrado**: link por colaborador, com respostas que geram relações automaticamente.
-2. **Snapshots no tempo**: comparar rodadas (tendência do poder de resistência, do alcance do GG e da migração dos neutros).
-3. **Backend multiusuário** (ex.: Supabase/PostgreSQL) com login, perfis de acesso e trilha de auditoria.
-4. **Integração com metadados** de calendário, e-mail e chat (Google Workspace / Microsoft 365), com consentimento.
-5. **Pesos ajustáveis** dos índices pela interface e análise de sensibilidade.
-6. **Relatório em PDF** para reuniões de diretoria.
-7. **Plano de ação rastreável**: cada recomendação vira uma tarefa com responsável, prazo e status.
+1. ~~Armazenamento online sem banco de dados~~ (feito: arquivo JSON num repositório privado do GitHub).
+2. **Questionário ONA integrado**: link por colaborador, com respostas que geram relações automaticamente.
+3. **Snapshots no tempo**: comparar rodadas (tendência do poder de resistência, do alcance do GG e da migração dos neutros).
+4. **Controle de acesso por pessoa** (login individual e perfis), caso um dia seja necessário restringir quem vê o quê.
+5. **Integração com metadados** de calendário, e-mail e chat (Google Workspace / Microsoft 365), com consentimento.
+6. **Pesos ajustáveis** dos índices pela interface e análise de sensibilidade.
+7. **Relatório em PDF** para reuniões de diretoria.
+8. **Plano de ação rastreável**: cada recomendação vira uma tarefa com responsável, prazo e status.

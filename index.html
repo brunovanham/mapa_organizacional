@@ -13,10 +13,12 @@
       <strong>Mapa Organizacional</strong>
       <span id="company-name" class="muted"></span>
     </div>
+    <button id="sync-status" class="sync-status" data-action="goto" data-id="dados" title="Onde os dados estão salvos"></button>
     <nav class="tabs" id="tabs">
-      <button data-view="mapa" class="active">Mapa</button>
-      <button data-view="pessoas">Pessoas</button>
-      <button data-view="departamentos">Departamentos</button>
+      <button data-view="painel" class="active">Painel</button>
+      <button data-view="colaboradores">Colaboradores</button>
+      <button data-view="mapa">Mapa</button>
+      <button data-view="departamentos">Setores e grupos</button>
       <button data-view="relacoes">Relações</button>
       <button data-view="analise">Análise</button>
       <button data-view="resistencia">Resistência</button>
@@ -27,12 +29,43 @@
   </header>
 
   <main>
+    <!-- PAINEL DE DECISÃO -->
+    <section id="view-painel" class="view active">
+      <h2>Painel de decisão</h2>
+      <p class="muted">Respostas diretas para o gerente: com quem ter cuidado, quem trazer para o seu lado, quem é influente, onde uma demissão é risco e onde é possível cortar.</p>
+      <div id="painel"></div>
+    </section>
+
+    <!-- COLABORADORES (cadastro rápido) -->
+    <section id="view-colaboradores" class="view">
+      <div class="section-head">
+        <h2>Colaboradores</h2>
+        <button data-action="toggle-people-table"><span id="toggle-table-label">Ver tabela</span></button>
+      </div>
+      <div class="cad">
+        <aside class="cad-list card">
+          <button class="primary full" data-action="new-person">+ Novo colaborador</button>
+          <input type="search" id="cad-search" placeholder="Buscar por nome, setor ou grupo…" aria-label="Buscar colaborador">
+          <div id="cad-items"></div>
+          <details class="paste">
+            <summary>Colar lista de nomes</summary>
+            <p class="muted small">Um por linha. Opcional: <code>Nome; Cargo; Setor; Grupo1|Grupo2</code> (aceita colar colunas do Excel).</p>
+            <textarea id="paste-list" rows="5" placeholder="Maria Silva; Analista; Financeiro&#10;João Souza; Operador; Produção; Turno A"></textarea>
+            <button data-action="paste-add">Adicionar todos</button>
+          </details>
+        </aside>
+        <div id="ficha"></div>
+      </div>
+      <div id="people-table" hidden></div>
+    </section>
+
     <!-- MAPA -->
-    <section id="view-mapa" class="view active">
+    <section id="view-mapa" class="view">
       <div class="map-toolbar">
         <label>Cor por
           <select id="color-by">
-            <option value="department">Departamento</option>
+            <option value="department">Setor</option>
+            <option value="group">Grupo / equipe</option>
             <option value="community">Cluster (comunidade)</option>
             <option value="stance">Posicionamento</option>
           </select>
@@ -65,22 +98,14 @@
       <div id="legend" class="legend"></div>
     </section>
 
-    <!-- PESSOAS -->
-    <section id="view-pessoas" class="view">
-      <div class="section-head">
-        <h2>Pessoas</h2>
-        <button class="primary" id="add-person">+ Nova pessoa</button>
-      </div>
-      <div id="people-table"></div>
-    </section>
-
     <!-- DEPARTAMENTOS -->
     <section id="view-departamentos" class="view">
       <div class="section-head">
-        <h2>Departamentos</h2>
-        <button class="primary" id="add-dep">+ Novo departamento</button>
+        <h2>Setores e grupos</h2>
+        <button class="primary" id="add-dep">+ Novo setor</button>
       </div>
-      <div id="dep-table"></div>
+      <div class="card"><h3>Setores</h3><div id="dep-table"></div></div>
+      <div class="card"><h3>Grupos / equipes</h3><p class="muted small">Grupos são transversais aos setores (turnos, projetos, comitês). Cadastre-os na ficha de cada colaborador.</p><div id="group-table"></div></div>
     </section>
 
     <!-- RELAÇÕES -->
@@ -143,6 +168,7 @@
   <script src="js/analytics.js"></script>
   <script src="js/sample-data.js"></script>
   <script src="js/store.js"></script>
+  <script src="js/github-sync.js"></script>
   <script src="js/app.js"></script>
 </body>
 </html>

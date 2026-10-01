@@ -123,6 +123,36 @@
     ],
   };
 
+  // Notas (desempenho, engajamento — 1 a 5) e grupos/equipes de cada pessoa.
+  const GRADES = {
+    ceo: [5, 5, []],
+    gg: [4, 5, ['Comitê de gestão']],
+    rs: [4, 2, ['Comitê de gestão', 'Projeto ERP']],
+    js: [4, 2, ['Comitê de gestão', 'Contas-chave']],
+    pl: [4, 3, ['Comitê de gestão', 'Projeto ERP']],
+    fr: [4, 5, ['Comitê de gestão', 'Comitê de qualidade']],
+    an: [3, 2, ['Turno A']],
+    bc: [4, 4, ['Comitê de qualidade']],
+    dg: [2, 2, ['Turno A']],
+    ed: [3, 3, ['Turno A']],
+    fe: [4, 3, ['Comitê de qualidade']],
+    gu: [5, 3, ['Projeto ERP', 'Comitê de qualidade']],
+    mt: [3, 3, ['Contas-chave']],
+    he: [5, 4, ['Contas-chave']],
+    ig: [2, 2, []],
+    la: [3, 3, []],
+    na: [3, 4, ['Projeto ERP']],
+    ot: [3, 3, []],
+    pr: [4, 4, ['Comitê de gestão']],
+    rf: [3, 4, []],
+    se: [3, 3, []],
+    tc: [2, 3, []],
+  };
+  for (const p of SAMPLE_DATA.people) {
+    const [performance, engagement, groups] = GRADES[p.id] || [null, null, []];
+    Object.assign(p, { performance, engagement, groups });
+  }
+
   if (typeof module === 'object' && module.exports) module.exports = SAMPLE_DATA;
   else root.SAMPLE_DATA = SAMPLE_DATA;
 })(typeof self !== 'undefined' ? self : this);

@@ -1,67 +1,90 @@
 # Mapa Organizacional
 
-Ferramenta de **Análise de Redes Organizacionais (ONA)** para apoiar a tomada de decisão da diretoria:
-quem influencia quem, quais são os grupos informais (clusters), onde está o conhecimento crítico,
-quem está resistindo ou boicotando uma mudança e qual seria o impacto de uma saída ou demissão.
+Sistema de **Análise de Redes Organizacionais (ONA)** para apoiar as decisões da diretoria e do gerente geral.
+Ele mostra com quem ter cuidado, quem trazer para o seu lado, quem é influente, onde uma demissão é um risco
+e onde é possível cortar. Para isso, usa o cadastro de colaboradores, notas e vínculos entre as pessoas.
 
-Roda **100% no navegador**, sem servidor e sem internet: os dados ficam no `localStorage` da máquina
-e só saem dela se você exportar o arquivo JSON.
+- **Interface gráfica** publicada de graça no GitHub Pages, sem instalação.
+- **Os dados ficam no próprio GitHub**, num arquivo JSON dentro de um repositório **privado**. Não há banco de dados.
+  Cada gravação vira uma versão no histórico, com auditoria e a possibilidade de voltar atrás.
+- **Sem login**: a chave de acesso é configurada uma vez por navegador, ou recebida por um *link de acesso*.
+
+## Arquitetura
+
+```
+ Navegador (GitHub Pages, público)                  GitHub (repositório PRIVADO)
+ ┌───────────────────────────────┐   API GitHub    ┌──────────────────────────────┐
+ │ index.html + js/ (interface)  │ ──── lê ──────▶ │ dados/organizacao.json       │
+ │ análise roda no navegador     │ ◀─── grava ──── │ (cada gravação = 1 commit)   │
+ │ cache local (localStorage)    │                 └──────────────────────────────┘
+ └───────────────────────────────┘
+```
+
+Este repositório (`mapa_organizacional`) é **público** e contém só o código. **Nunca** coloque dados de
+colaboradores aqui: use o repositório privado de dados.
+
+## Colocar no ar (uma única vez, ~10 minutos)
+
+1. **Publicar a interface**: em *Settings → Pages* deste repositório, escolha *Source: GitHub Actions*.
+   Depois rode o workflow *Publicar interface* (aba *Actions → Run workflow*). O endereço fica parecido com
+   `https://brunovanham.github.io/mapa_organizacional/`.
+2. **Criar o repositório de dados** (privado): em <https://github.com/new>, crie por exemplo `mapa_organizacional_dados`,
+   marque **Private** e marque *Add a README file*.
+3. **Criar a chave de acesso**: em <https://github.com/settings/personal-access-tokens/new> (*fine-grained token*),
+   escolha *Only select repositories* → o repositório de dados → *Permissions → Contents: Read and write*,
+   defina uma validade e gere a chave.
+4. Abra o sistema e vá em **Dados → Armazenamento no GitHub**. Preencha dono, repositório e chave e clique em **Conectar**.
+5. Para o gerente geral usar sem login: **Dados → Gerar link de acesso**. Envie o link por um canal privado.
+   Quem abrir o link já entra conectado.
+
+> Quem tem o link ou a chave pode ler e alterar os dados. Para revogar o acesso, apague a chave no GitHub e gere outra.
+
+Também funciona sem GitHub: basta abrir `index.html` no navegador, e os dados ficam só naquele computador.
 
 ## Como usar
 
-```bash
-# opção 1: abrir direto
-abra o arquivo index.html no navegador
-
-# opção 2: servidor local (recomendado)
-npm start            # equivale a: python3 -m http.server 8080
-# acesse http://localhost:8080
-```
-
-1. **Dados → Carregar exemplo fictício** para conhecer a ferramenta (empresa e nomes inventados).
-2. **Departamentos**: crie as áreas.
-3. **Pessoas**: cadastre cada colaborador com cargo, nível, gestor, conhecimento crítico (0–5),
-   habilidades e, se souber, o posicionamento em relação à mudança. Também dá para importar um CSV na aba Dados.
-4. **Relações**: use o *cadastro rápido* para marcar com quem cada pessoa trabalha, quem influencia,
-   amizades, vínculos familiares, conflitos e boicotes, com força (1–5) e sentimento (−2 a +2).
-5. **Ocorrências**: registre fatos (data, quem, o quê, gravidade). Eles alimentam a análise e servem de
-   base documental para feedbacks e decisões.
-6. Defina a **pessoa focal** (ex.: o novo gerente geral) em *Resistência* ou *Dados*.
-7. Explore **Mapa**, **Análise**, **Resistência** e **Simulação**.
-
-## O que o sistema calcula
-
-| Aba | O que mostra |
+| Aba | Para quê |
 |---|---|
-| Mapa | Grafo interativo. Cor por departamento, cluster ou posicionamento. Tamanho por influência, peso, intermediação, risco de conhecimento ou nível. Layout pela rede informal, concêntrico por influência ou pela hierarquia formal. |
-| Análise | Ranking (influência, peso, PageRank, intermediação, proximidade, risco de conhecimento), clusters de Louvain, pares-chave, conflitos críticos, organização "sombra" (influência × cargo), pontos únicos de falha, tríades em tensão e recomendações. |
-| Resistência | Apoiadores, neutros e resistentes; núcleos de resistência (coalizões) e sua audiência; vínculos familiares dentro do núcleo; "porteiros" de quem a pessoa focal depende; prioridade de engajamento dos neutros; plano de ação. |
-| Simulação | Saída de uma ou várias pessoas: custo operacional (0–100), redução da resistência, perda de eficiência da rede, conhecimento perdido, pessoas isoladas e risco de contágio. Também gera o ranking de impacto de todas as pessoas. |
+| **Painel** | As respostas para o gerente: *com quem ter cuidado*, *trazer para o seu lado*, *pessoas influentes*, *demissão é risco*, *onde é possível cortar* e *aliados*. Inclui uma matriz (custo de saída × posição) e uma ação recomendada por pessoa. |
+| **Colaboradores** | Ficha de cadastro rápido, salva automaticamente: dados, setor, grupos/equipes, notas por clique (desempenho, conhecimento crítico, engajamento, posição em relação ao gerente), habilidades e vínculos. Digite o nome, escolha o tipo e a força, e se a pessoa não existir ela é criada. Também aceita colar uma lista de nomes. |
+| Mapa | Rede interativa colorida por setor, grupo, cluster ou posição. |
+| Setores e grupos | Coesão, abertura, conflitos, desempenho e posição média de cada setor e grupo. |
+| Relações | Lista completa de vínculos e cadastro em lote. |
+| Análise | Rankings (influência, PageRank, intermediação), clusters, pares-chave, conflitos, organização "sombra" e pontos únicos de falha. |
+| Resistência | Núcleos de resistência, porteiros do gerente e prioridade de engajamento. |
+| Simulação | O que acontece se uma ou mais pessoas saírem: custo operacional, redução de resistência e contágio. |
+| Ocorrências | Registro de fatos (boicote, retenção de informação…) que embasam conversas e decisões. |
+| Dados | GitHub, link de acesso, backup JSON, importação CSV e exemplo fictício. |
 
-A metodologia completa, as fórmulas e um guia de ação para o cenário de boicote estão em
-[`docs/GUIA.md`](docs/GUIA.md).
+Ordem recomendada: **Colaboradores** (cadastro, notas e vínculos) → definir o gerente como *pessoa focal* no Painel → **Painel**.
+
+A metodologia, as fórmulas e o plano de ação estão em [`docs/GUIA.md`](docs/GUIA.md).
 
 ## Estrutura
 
 ```
-index.html            interface
-css/style.css         estilos (tema claro/escuro)
-js/analytics.js       motor de análise (funções puras, testável no Node)
-js/store.js           persistência local, importação e exportação
-js/app.js             telas, mapa e formulários
-js/sample-data.js     dados fictícios de exemplo
-vendor/               Cytoscape.js (MIT) embutido para funcionar offline
-tests/                testes do motor de análise (npm test)
+index.html               interface
+css/style.css            estilos (tema claro/escuro, celular)
+js/analytics.js          motor de análise e painel de decisão (funções puras, testadas no Node)
+js/store.js              estado e cache local
+js/github-sync.js        leitura/gravação no GitHub, link de acesso e conflitos
+js/app.js                telas
+js/sample-data.js        dados fictícios de exemplo
+vendor/                  Cytoscape.js (MIT), embutido
+tests/                   testes (npm test)
+.github/workflows/       testes + publicação no GitHub Pages
 ```
 
-## Testes
+## Desenvolvimento
 
 ```bash
-npm test
+npm start    # servidor local em http://localhost:8080
+npm test     # testes do motor de análise
 ```
 
 ## Privacidade (LGPD)
 
-Este sistema guarda dados pessoais e percepções sobre colaboradores. Restrinja o acesso,
-exporte backups para um local protegido, não compartilhe o arquivo e use as análises como
-**apoio à gestão**, nunca como prova isolada para punição. Veja a seção de cuidados em `docs/GUIA.md`.
+São dados pessoais e avaliações sobre colaboradores. Guarde-os **só** no repositório privado, restrinja quem
+recebe o link de acesso e use as análises como **apoio à gestão**, nunca como prova isolada.
+Vínculo familiar nunca é motivo de demissão; decisões se baseiam em conduta e desempenho documentados,
+com orientação jurídica. Veja `docs/GUIA.md`.
