@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '9';
+  const APP_VERSION = '10';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -2187,6 +2187,19 @@
       if (intro && backend())
         intro.innerHTML = `<h3>Empresas com código</h3><p>Convite ativo neste navegador.</p>
           <div class="btn-row"><button class="primary" data-action="open-gate">Entrar ou criar uma empresa</button></div>`;
+    },
+    // Atalho da tela de entrada para a área do administrador (gerar convite).
+    'gate-admin': () => {
+      sessionFlag(true);
+      showGate(false);
+      setView('dados');
+      const box = $('#admin-box');
+      if (box) {
+        box.open = true;
+        box.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        const owner = $('#inv-token');
+        if (owner) owner.focus();
+      }
     },
     'gate-demo': () => {
       sessionFlag(true);
