@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Mapa Organizacional</title>
+  <link rel="icon" href="data:,">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="topbar">
+    <div class="brand">
+      <strong>Mapa Organizacional</strong>
+      <span id="company-name" class="muted"></span>
+    </div>
+    <nav class="tabs" id="tabs">
+      <button data-view="mapa" class="active">Mapa</button>
+      <button data-view="pessoas">Pessoas</button>
+      <button data-view="departamentos">Departamentos</button>
+      <button data-view="relacoes">Relações</button>
+      <button data-view="analise">Análise</button>
+      <button data-view="resistencia">Resistência</button>
+      <button data-view="simulacao">Simulação</button>
+      <button data-view="ocorrencias">Ocorrências</button>
+      <button data-view="dados">Dados</button>
+    </nav>
+  </header>
+
+  <main>
+    <!-- MAPA -->
+    <section id="view-mapa" class="view active">
+      <div class="map-toolbar">
+        <label>Cor por
+          <select id="color-by">
+            <option value="department">Departamento</option>
+            <option value="community">Cluster (comunidade)</option>
+            <option value="stance">Posicionamento</option>
+          </select>
+        </label>
+        <label>Tamanho por
+          <select id="size-by">
+            <option value="influence">Influência</option>
+            <option value="peso">Peso geral</option>
+            <option value="betweenness">Intermediação</option>
+            <option value="knowledgeRisk">Risco de conhecimento</option>
+            <option value="formal">Nível hierárquico</option>
+          </select>
+        </label>
+        <label>Layout
+          <select id="layout">
+            <option value="cose">Força (rede informal)</option>
+            <option value="concentric">Concêntrico por influência</option>
+            <option value="breadthfirst">Hierarquia formal</option>
+          </select>
+        </label>
+        <label class="chk"><input type="checkbox" id="show-pos" checked> Positivas</label>
+        <label class="chk"><input type="checkbox" id="show-neg" checked> Conflito / boicote</label>
+        <label class="chk"><input type="checkbox" id="show-formal"> Hierarquia formal</label>
+        <input type="search" id="map-search" placeholder="Buscar pessoa…">
+      </div>
+      <div class="map-wrap">
+        <div id="cy"></div>
+        <aside id="detail" class="detail hidden"></aside>
+      </div>
+      <div id="legend" class="legend"></div>
+    </section>
+
+    <!-- PESSOAS -->
+    <section id="view-pessoas" class="view">
+      <div class="section-head">
+        <h2>Pessoas</h2>
+        <button class="primary" id="add-person">+ Nova pessoa</button>
+      </div>
+      <div id="people-table"></div>
+    </section>
+
+    <!-- DEPARTAMENTOS -->
+    <section id="view-departamentos" class="view">
+      <div class="section-head">
+        <h2>Departamentos</h2>
+        <button class="primary" id="add-dep">+ Novo departamento</button>
+      </div>
+      <div id="dep-table"></div>
+    </section>
+
+    <!-- RELAÇÕES -->
+    <section id="view-relacoes" class="view">
+      <div class="section-head">
+        <h2>Relações</h2>
+        <button class="primary" id="add-rel">+ Nova relação</button>
+      </div>
+      <details class="card" open>
+        <summary><strong>Cadastro rápido</strong> — marque com quem uma pessoa se relaciona</summary>
+        <div id="bulk-form" class="bulk"></div>
+      </details>
+      <div class="filters">
+        <input type="search" id="rel-filter" placeholder="Filtrar por nome…">
+        <select id="rel-type-filter"></select>
+      </div>
+      <div id="rel-table"></div>
+    </section>
+
+    <!-- ANÁLISE -->
+    <section id="view-analise" class="view">
+      <h2>Análise da rede</h2>
+      <div id="analysis"></div>
+    </section>
+
+    <!-- RESISTÊNCIA -->
+    <section id="view-resistencia" class="view">
+      <h2>Resistência e boicote</h2>
+      <div id="resistance"></div>
+    </section>
+
+    <!-- SIMULAÇÃO -->
+    <section id="view-simulacao" class="view">
+      <h2>Simulação de saída / demissão</h2>
+      <p class="muted">Selecione uma ou mais pessoas para ver o que acontece com a rede se elas saírem. O custo operacional e a redução de resistência aparecem separados: uma decisão pode reduzir a resistência e, ao mesmo tempo, custar conhecimento crítico.</p>
+      <div id="simulation"></div>
+    </section>
+
+    <!-- OCORRÊNCIAS -->
+    <section id="view-ocorrencias" class="view">
+      <div class="section-head">
+        <h2>Ocorrências</h2>
+        <button class="primary" id="add-inc">+ Registrar ocorrência</button>
+      </div>
+      <p class="muted">Registre fatos observáveis, com data e descrição objetiva (o quê, quando, impacto). Fatos documentados sustentam conversas de feedback e decisões; impressões, não.</p>
+      <div id="inc-table"></div>
+    </section>
+
+    <!-- DADOS -->
+    <section id="view-dados" class="view">
+      <h2>Dados e configurações</h2>
+      <div id="data-panel"></div>
+    </section>
+  </main>
+
+  <dialog id="modal"><form method="dialog" id="modal-form"></form></dialog>
+  <div id="toast" class="toast"></div>
+
+  <script src="vendor/cytoscape.min.js"></script>
+  <script src="js/analytics.js"></script>
+  <script src="js/sample-data.js"></script>
+  <script src="js/store.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
