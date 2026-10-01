@@ -466,3 +466,5 @@ details.admin summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
 .leave-btn { font-weight: 600; border-color: var(--bad); color: var(--bad); }
 .brand #company-name { font-weight: 600; color: var(--text); }
 .gate-where:has(strong) { border-left: 4px solid var(--warn); text-align: left; }
+.share-steps { padding-left: 20px; }
+.share-steps li { margin-bottom: 10px; }

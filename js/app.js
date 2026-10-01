@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '12';
+  const APP_VERSION = '13';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -1869,6 +1869,7 @@
     el.innerHTML = `<i></i>${esc(label + time)}`;
     el.title = G.error || (G.isCompany ? 'Dados da empresa, criptografados' : G.connected ? `${G.cfg.owner}/${G.cfg.repo} · ${G.cfg.path}` : 'Os dados estão só neste navegador');
     $('#leave-btn').hidden = !G.isCompany;
+    $('#share-btn').hidden = !(G.isCompany && G.invite);
     $('#gate-btn').hidden = G.connected;
     if (G.isCompany && G.cfg.via === 'local' && G.status === 'saved') {
       el.innerHTML = '<i></i>Salvo neste computador';
@@ -1885,8 +1886,9 @@
         <h3>Empresa: ${esc(data().settings.companyName || '(sem nome)')} <span class="badge st-apoiador">conectada</span></h3>
         <p>Os dados desta empresa ficam ${G.cfg.via === 'local' ? '<strong>só neste computador</strong>' : '<strong>salvos online</strong>'}, <strong>criptografados com o código de acesso</strong>. Ninguém sem o código consegue lê-los.</p>
         <p class="small">Situação: <strong>${esc((SYNC_LABEL[G.status] || [])[1] || '')}</strong>${G.error ? ` — <span class="neg-text">${esc(G.error)}</span>` : ''}</p>
-        <p class="small muted">Para outra pessoa acessar esta empresa, passe a ela o código por um canal privado. Ao terminar num computador compartilhado, clique em <em>Sair da empresa</em>.</p>
+        <p class="small muted">Para outra pessoa acessar esta empresa, ela precisa do <strong>link de convite</strong> e do <strong>código</strong>. Ao terminar num computador compartilhado, clique em <em>Sair da empresa</em>.</p>
         <div class="btn-row">
+          ${G.invite ? '<button class="primary" data-action="share-invite">Compartilhar acesso</button>' : ''}
           <button class="primary" data-action="gh-save">Salvar agora</button>
           <button data-action="gh-reload">Recarregar</button>
           <button class="danger" data-action="leave-company">Sair da empresa</button>
@@ -2062,15 +2064,16 @@
   }
 
   // --------------------------------------------------------------- modal
-  function openModal(title, body, onSubmit, onDelete) {
+  function openModal(title, body, onSubmit, onDelete, labels) {
+    labels = labels || {};
     const dlg = $('#modal');
     const form = $('#modal-form');
     form.innerHTML = `<h3>${esc(title)}</h3>${body}
       <div class="btn-row end">
         ${onDelete ? '<button type="button" class="danger" data-modal="delete">Excluir</button>' : ''}
         <span class="spacer"></span>
-        <button type="button" data-modal="cancel">Cancelar</button>
-        <button type="submit" class="primary">Salvar</button>
+        <button type="button" data-modal="cancel">${esc(labels.cancel || 'Cancelar')}</button>
+        <button type="submit" class="primary">${esc(labels.submit || 'Salvar')}</button>
       </div>`;
     form.onsubmit = (e) => {
       e.preventDefault();
@@ -2083,6 +2086,41 @@
     dlg.showModal();
     const first = form.querySelector('input,select,textarea');
     if (first) first.focus();
+  }
+
+  async function copyText(text, input) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch (e) {
+      if (input) {
+        input.select();
+        document.execCommand('copy');
+      }
+    }
+  }
+
+  function shareInviteForm() {
+    const link = G.invite ? G.inviteLink(G.invite) : '';
+    if (!link) return toast('Este navegador não tem link de convite para compartilhar.');
+    const name = data().settings.companyName || 'a empresa';
+    openModal(
+      'Compartilhar acesso',
+      `<p>Para outra pessoa entrar em <strong>${esc(name)}</strong>, ela precisa de duas coisas:</p>
+       <ol class="share-steps">
+         <li><strong>Este link de convite</strong>: ela abre uma vez em cada navegador ou computador.
+           <div class="link-box"><input id="share-link" readonly value="${esc(link)}"><button type="button" data-action="share-copy">Copiar link</button></div></li>
+         <li><strong>O código da empresa</strong>: ela digita na tela de entrada.</li>
+       </ol>
+       <p class="notice-inline small">Envie o link e o código <strong>separados</strong> (por exemplo, o link por WhatsApp e o código por ligação). Assim, se uma mensagem vazar, a outra metade continua protegida. Envie só para quem pode ver os dados desta empresa.</p>`,
+      () => {
+        copyText(link, $('#share-link'));
+        toast('Link de convite copiado.');
+      },
+      null,
+      { submit: 'Copiar link e fechar', cancel: 'Fechar' }
+    );
+    const inp = $('#share-link');
+    if (inp) inp.select();
   }
 
   function download(name, text) {
@@ -2190,6 +2228,12 @@
           <div class="btn-row"><button class="primary" data-action="open-gate">Entrar ou criar uma empresa</button></div>`;
     },
     // Atalho da tela de entrada para a área do administrador (gerar convite).
+    'share-invite': () => shareInviteForm(),
+    'share-copy': () => {
+      const inp = $('#share-link');
+      copyText(inp.value, inp);
+      toast('Link de convite copiado.');
+    },
     'gate-admin': () => {
       sessionFlag(true);
       showGate(false);
