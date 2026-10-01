@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '8';
+  const APP_VERSION = '9';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -1808,13 +1808,20 @@
     document.body.classList.toggle('gated', show);
     if (show) {
       $$('#gate .gate-msg').forEach((m) => (m.textContent = ''));
+      const where = $('#gate-where');
+      const k = backend().kind;
+      if (where)
+        where.innerHTML =
+          k === 'local'
+            ? '🔒 Os dados ficam <strong>criptografados neste computador</strong>. Para acessar de outros computadores, abra o <strong>link de convite</strong> enviado pelo administrador antes de criar a empresa.'
+            : '🔒 Os dados ficam <strong>criptografados e salvos online</strong>. Você acessa de qualquer computador com o mesmo código.';
       const first = $('#gate-enter [name="code"]');
       if (first) first.focus();
     }
   }
 
   function gateNeeded() {
-    return !!backend() && !G.connected && !sessionFlag();
+    return !G.connected && !sessionFlag();
   }
 
   async function gateSubmit(form, create) {
@@ -1861,7 +1868,11 @@
     el.innerHTML = `<i></i>${esc(label + time)}`;
     el.title = G.error || (G.isCompany ? 'Dados da empresa, criptografados' : G.connected ? `${G.cfg.owner}/${G.cfg.repo} · ${G.cfg.path}` : 'Os dados estão só neste navegador');
     $('#leave-btn').hidden = !G.isCompany;
-    $('#gate-btn').hidden = !backend() || G.connected;
+    $('#gate-btn').hidden = G.connected;
+    if (G.isCompany && G.cfg.via === 'local' && G.status === 'saved') {
+      el.innerHTML = '<i></i>Salvo neste computador';
+      el.title = 'Dados da empresa criptografados neste computador';
+    }
     if (currentView === 'dados') renderGitHubCard();
   }
 
@@ -1871,7 +1882,7 @@
     if (G.isCompany) {
       box.innerHTML = `
         <h3>Empresa: ${esc(data().settings.companyName || '(sem nome)')} <span class="badge st-apoiador">conectada</span></h3>
-        <p>Os dados desta empresa ficam salvos online, <strong>criptografados com o código de acesso</strong>. Ninguém sem o código consegue lê-los.</p>
+        <p>Os dados desta empresa ficam ${G.cfg.via === 'local' ? '<strong>só neste computador</strong>' : '<strong>salvos online</strong>'}, <strong>criptografados com o código de acesso</strong>. Ninguém sem o código consegue lê-los.</p>
         <p class="small">Situação: <strong>${esc((SYNC_LABEL[G.status] || [])[1] || '')}</strong>${G.error ? ` — <span class="neg-text">${esc(G.error)}</span>` : ''}</p>
         <p class="small muted">Para outra pessoa acessar esta empresa, passe a ela o código por um canal privado. Ao terminar num computador compartilhado, clique em <em>Sair da empresa</em>.</p>
         <div class="btn-row">
@@ -1926,7 +1937,7 @@
       <div class="btn-row"><button class="primary" data-action="inv-make">Gerar link de convite</button></div>
       <div id="inv-box"></div>
       <p class="muted small"><strong>Importante:</strong> o link leva a chave do GitHub (na parte depois do <code>#</code>, que não é enviada a nenhum servidor nem fica no código). Envie só para quem você conhece, por mensagem privada. Quem tiver o link consegue gravar no repositório de dados, mas <strong>não consegue ler nenhuma empresa sem o código dela</strong>. Para cortar o acesso de todos, apague a chave no GitHub e gere um convite novo.</p>`;
-    box.innerHTML = companyIntro + `<details class="admin"${backend() ? '' : ' open'}><summary>Administrador: convites e armazenamento</summary>` + inviteAdmin +
+    box.innerHTML = companyIntro + `<details class="admin" id="admin-box"><summary>Administrador: gerar link de convite</summary>` + inviteAdmin +
       `<details class="admin"><summary>Outro modo: um único arquivo de dados com a sua chave (sem empresas)</summary>` + `
       <h3>Armazenamento no GitHub <span class="badge warn">não configurado</span></h3>
       <p>Hoje os dados estão salvos só neste navegador. Conecte a um repositório <strong>privado</strong> do GitHub para gravar e ler os dados de qualquer computador, sem banco de dados e sem login.</p>
@@ -2171,7 +2182,7 @@
       box.innerHTML = `<div class="link-box"><input id="gh-link-input" readonly value="${esc(link)}"><button data-action="gh-copy">Copiar</button></div>
         <p class="ok-text small">Convite pronto. Envie este link só para quem você conhece.</p>`;
       $('#gh-link-input').select();
-      $('#gate-btn').hidden = !backend() || G.connected;
+      $('#gate-btn').hidden = G.connected;
       const intro = $('.company-intro');
       if (intro && backend())
         intro.innerHTML = `<h3>Empresas com código</h3><p>Convite ativo neste navegador.</p>
@@ -2193,8 +2204,7 @@
       selectedId = null;
       lastLayoutKey = '';
       renderSyncStatus();
-      if (backend()) showGate(true);
-      else setView('colaboradores');
+      showGate(true);
       toast('Você saiu da empresa. Os dados foram apagados deste navegador.');
     },
     'gh-connect': async () => {

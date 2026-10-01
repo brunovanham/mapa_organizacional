@@ -220,6 +220,30 @@
     },
   };
 
+  // Empresas guardadas CIFRADAS só neste computador (quando não há convite
+  // nem servidor). Mesmo formato de arquivo; o "sha" é um contador de versão.
+  const localKey = (cfg) => 'mapaOrganizacional.empresa.' + cfg.id;
+  const CompanyLocal = {
+    async read(cfg) {
+      const rec = readJSON(localKey(cfg));
+      if (!rec) return { data: null, sha: null };
+      return { data: await root.Vault.unseal(rec.envelope, cfg.keyB64), sha: rec.sha };
+    },
+    head: async (cfg) => (readJSON(localKey(cfg)) || {}).sha || null,
+    async write(cfg, data, sha) {
+      const cur = readJSON(localKey(cfg));
+      if ((cur && cur.sha !== sha) || (!cur && sha)) {
+        const err = new Error(sha ? 'Outra aba salvou antes de você.' : 'Já existe uma empresa com este código neste computador.');
+        err.conflict = true;
+        throw err;
+      }
+      const envelope = await root.Vault.seal(data, cfg.keyB64);
+      const next = Date.now().toString(16) + Math.random().toString(16).slice(2, 8);
+      writeJSON(localKey(cfg), { envelope, sha: next });
+      return next;
+    },
+  };
+
   const b64url = (obj) => b64encode(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const fromB64url = (str) => JSON.parse(b64decode(decodeURIComponent(str).replace(/-/g, '+').replace(/_/g, '/')));
 
@@ -244,7 +268,7 @@
     get connected() {
       const c = this.cfg;
       if (!c) return false;
-      if (c.mode === 'empresa') return !!(c.id && c.keyB64 && (c.via === 'github' ? c.gh && c.gh.token : c.apiUrl));
+      if (c.mode === 'empresa') return !!(c.id && c.keyB64 && (c.via === 'local' || (c.via === 'github' ? c.gh && c.gh.token : c.apiUrl)));
       return !!(c.token && c.owner && c.repo);
     },
 
@@ -254,7 +278,7 @@
 
     get adapter() {
       if (!this.isCompany) return Remote;
-      return this.cfg.via === 'github' ? CompanyGitHub : CompanyRemote;
+      return { github: CompanyGitHub, local: CompanyLocal }[this.cfg.via] || CompanyRemote;
     },
 
     // ----- convite (empresas sem servidor)
@@ -264,7 +288,7 @@
     companyBackend(apiUrl) {
       if (apiUrl) return { kind: 'api', apiUrl };
       if (this.invite && this.invite.token && this.invite.owner && this.invite.repo) return { kind: 'github', gh: this.invite };
-      return null;
+      return { kind: 'local' };
     },
 
     setInvite(inv) {
@@ -419,8 +443,10 @@
       const cfg =
         backend.kind === 'github'
           ? { mode: 'empresa', via: 'github', gh: backend.gh, id, keyB64 }
-          : { mode: 'empresa', via: 'api', apiUrl: backend.apiUrl, id, keyB64 };
-      const remote = await (backend.kind === 'github' ? CompanyGitHub : CompanyRemote).read(cfg);
+          : backend.kind === 'local'
+            ? { mode: 'empresa', via: 'local', id, keyB64 }
+            : { mode: 'empresa', via: 'api', apiUrl: backend.apiUrl, id, keyB64 };
+      const remote = await ({ github: CompanyGitHub, local: CompanyLocal }[backend.kind] || CompanyRemote).read(cfg);
       if (opts.create && remote.data) throw new Error('Já existe uma empresa com este código. Escolha outro código.');
       if (!opts.create && !remote.data)
         throw new Error('Nenhuma empresa encontrada com este código. Confira o código: letras maiúsculas e minúsculas fazem diferença.');
@@ -544,5 +570,6 @@
   root.GitHubSync = Sync;
   root.CompanyRemote = CompanyRemote;
   root.CompanyGitHub = CompanyGitHub;
+  root.CompanyLocal = CompanyLocal;
   root.GitHubRemote = Remote;
 })(typeof self !== 'undefined' ? self : this);
