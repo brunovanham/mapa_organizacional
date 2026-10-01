@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '14';
+  const APP_VERSION = '15';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -252,12 +252,25 @@
     const max = Math.max(1e-9, ...vals);
 
     const els = [];
+    // Turmas informais: agrupa cada turma numa "caixa" (só no layout de rede).
+    const grouped = colorBy === 'community' && $('#layout').value === 'cose';
+    if (grouped) {
+      for (const c of model.communities) {
+        if (c.members.length < 2) continue;
+        els.push({
+          group: 'nodes',
+          data: { id: 'cl_' + c.id, label: `Turma ${c.id + 1}`, color: CLUSTER_PALETTE[c.id % CLUSTER_PALETTE.length], size: 1, cluster: 1 },
+        });
+      }
+    }
     for (const p of data().people) {
       const m = model.byId.get(p.id);
       if (!m) continue;
+      const comm = model.communities[m.community];
       els.push({
         group: 'nodes',
         data: {
+          ...(grouped && comm && comm.members.length > 1 ? { parent: 'cl_' + m.community } : {}),
           id: p.id,
           label: p.name,
           color: nodeColor(p, m, colorBy),
@@ -323,15 +336,38 @@
       { selector: 'edge.neg', style: { 'line-color': cssVar('--bad'), 'target-arrow-color': cssVar('--bad'), 'line-style': 'dashed', opacity: 0.9 } },
       { selector: 'edge.familiar', style: { 'line-color': cssVar('--family'), opacity: 1 } },
       { selector: 'edge.formal', style: { 'line-color': cssVar('--muted'), 'target-arrow-color': cssVar('--muted'), 'line-style': 'dotted', width: 1.5, opacity: 0.8 } },
+      {
+        selector: 'node[cluster = 1]',
+        style: {
+          shape: 'round-rectangle',
+          'background-color': 'data(color)',
+          'background-opacity': 0.08,
+          'border-width': 2,
+          'border-style': 'dashed',
+          'border-color': 'data(color)',
+          label: 'data(label)',
+          'text-valign': 'top',
+          'text-halign': 'center',
+          'font-size': 13,
+          'font-weight': 600,
+          color: 'data(color)',
+          'text-margin-y': -4,
+          padding: '14px',
+        },
+      },
       { selector: '.faded', style: { opacity: 0.12 } },
     ];
 
     const layoutName = $('#layout').value;
-    const layoutKey = layoutName + '|' + data().people.map((p) => p.id).join(',');
+    const layoutKey = layoutName + (grouped ? '|turmas' : '') + '|' + data().people.map((p) => p.id).join(',');
     const prev = cy ? Object.fromEntries(cy.nodes().map((n) => [n.id(), n.position()])) : {};
     if (!cy) {
       cy = cytoscape({ container: box, elements: els, style, wheelSensitivity: 0.3 });
-      cy.on('tap', 'node', (e) => selectPerson(e.target.id()));
+      cy.on('tap', 'node', (e) => {
+        const id = e.target.id();
+        if (id.startsWith('cl_')) highlightCluster(Number(id.slice(3)));
+        else selectPerson(id);
+      });
       cy.on('tap', (e) => {
         if (e.target === cy) selectPerson(null);
       });
@@ -348,6 +384,7 @@
     }
     if (selectedId && cy.getElementById(selectedId).nonempty()) highlight(selectedId);
     renderLegend(colorBy);
+    renderClusterPanel(colorBy);
     renderDetail();
   }
 
@@ -410,6 +447,86 @@
       `<span><i class="ln neg"></i>conflito ou boicote</span><span><i class="ln fam"></i>parentes ou casal</span>` +
       `<span>★ gerente</span><span><i class="ring"></i>única ligação entre partes da equipe</span>` +
       `<span>tamanho do círculo = ${esc(($('#size-by').selectedOptions[0] || {}).text || '').toLowerCase()}</span>`;
+  }
+
+  function highlightCluster(cid) {
+    const c = model.communities[cid];
+    if (!cy || !c) return;
+    selectedId = null;
+    renderDetail();
+    cy.elements().removeClass('faded');
+    cy.nodes().unselect();
+    const members = cy.collection(c.members.map((id) => cy.getElementById(id)).filter((n) => n.nonempty()));
+    const keep = members.union(members.edgesWith(members)).union(cy.getElementById('cl_' + cid));
+    cy.elements().not(keep).addClass('faded');
+    // Enquadra a turma sem aproximar demais e volta a tela para o mapa.
+    cy.fit(members, 80);
+    if (cy.zoom() > 1.3) {
+      const bb = members.boundingBox();
+      cy.zoom({ level: 1.3, position: { x: (bb.x1 + bb.x2) / 2, y: (bb.y1 + bb.y2) / 2 } });
+      cy.center(members);
+    }
+    $('#cy').scrollIntoView({ behavior: 'smooth', block: 'center' });
+    $$('.cluster-card').forEach((el) => el.classList.toggle('active', Number(el.dataset.cid) === cid));
+  }
+
+  // Leitura das turmas informais em linguagem simples.
+  function clusterAlerts(c) {
+    const out = [];
+    const sc = c.stanceCounts;
+    const firstConn = c.connectors[0];
+    if (c.hasFocal) out.push(['info', 'O gerente faz parte desta turma.']);
+    if (sc.resistente >= 2 && sc.resistente > sc.apoiador) out.push(['bad', 'Mais gente resistindo ao gerente do que apoiando: é um foco de oposição.']);
+    if (!c.connectors.length) out.push(['bad', 'Turma isolada: não tem relação com o resto da empresa.']);
+    else if (c.connectors.length === 1) out.push(['bad', `Só ${pname(firstConn.id)} liga esta turma ao resto da empresa. Se sair, a turma fica isolada.`]);
+    else if (firstConn.strength / Math.max(1e-9, c.externalStrength) >= 0.6)
+      out.push(['warn', `A ligação com o resto da empresa depende muito de ${pname(firstConn.id)}.`]);
+    if (c.departmentIds.length >= 3) out.push(['ok', `Mistura ${c.departmentIds.length} setores: é onde o trabalho entre áreas acontece.`]);
+    else if (c.departmentIds.length === 1 && c.members.length >= 4) out.push(['warn', 'Fechada num só setor: pode funcionar como um silo.']);
+    if (c.members.length >= 3 && c.density >= 0.7) out.push(['info', 'Muito unida: quase todos convivem com todos.']);
+    return out;
+  }
+
+  function renderClusterPanel(colorBy) {
+    const box = $('#cluster-panel');
+    if (!box) return;
+    if (colorBy !== 'community') {
+      box.innerHTML = data().people.length
+        ? '<p class="muted small cluster-tip">Dica: em <strong>"Cores mostram"</strong>, escolha <strong>"Turmas informais"</strong> para ver os grupos que convivem mais entre si e a análise de cada um.</p>'
+        : '';
+      return;
+    }
+    const list = model.communities.slice().sort((a, b) => b.members.length - a.members.length);
+    const strength = model.modularity > 0.4 ? 'forte' : model.modularity > 0.25 ? 'moderada' : 'fraca';
+    const est = (c, k) => (c.stanceEstimated[k] ? ` <span class="muted">(${c.stanceEstimated[k]} estimado${c.stanceEstimated[k] > 1 ? 's' : ''})</span>` : '');
+    box.innerHTML = `
+      <div class="card cluster-intro">
+        <h3>Turmas informais ${help('Grupos de pessoas que convivem mais entre si do que com o resto da empresa. O sistema descobre as turmas pelas relações cadastradas (método de Louvain), sem olhar setor nem cargo.')}</h3>
+        <p class="small">O sistema encontrou <strong>${list.length} turma${list.length === 1 ? '' : 's'}</strong>. A divisão em "panelas" está <strong>${strength}</strong>${strength === 'forte' ? ': as turmas conversam pouco entre si' : strength === 'moderada' ? ': há turmas, mas elas se comunicam' : ': a empresa é bem integrada'}. Clique numa turma para destacá-la no mapa.</p>
+      </div>
+      <div class="cluster-grid">${list
+        .map((c) => {
+          const color = CLUSTER_PALETTE[c.id % CLUSTER_PALETTE.length];
+          const sc = c.stanceCounts;
+          const deps = c.departmentIds.map(depName).join(', ') || '—';
+          const linked = c.linksTo[0] ? `Mais ligada à <strong>Turma ${c.linksTo[0].community + 1}</strong>.` : '';
+          const conns = c.connectors.slice(0, 3).map((x) => personLink(x.id)).join(', ');
+          return `<div class="cluster-card" data-cid="${c.id}" data-action="highlight-cluster" data-id="${c.id}" style="border-top-color:${color}">
+            <div class="cluster-head"><strong style="color:${color}">Turma ${c.id + 1}</strong> <span class="muted small">${c.members.length} pessoa${c.members.length === 1 ? '' : 's'}</span></div>
+            <div class="small">Quem lidera: ${personLink(c.leader)}</div>
+            <div class="small">Setores: ${esc(deps)}</div>
+            <div class="small cluster-stance">
+              <span class="badge st-apoiador">${sc.apoiador} apoia${sc.apoiador === 1 ? '' : 'm'}</span>${est(c, 'apoiador')}
+              <span class="badge st-neutro">${sc.neutro} neutro${sc.neutro === 1 ? '' : 's'}</span>${est(c, 'neutro')}
+              <span class="badge st-resistente">${sc.resistente} resiste${sc.resistente === 1 ? '' : 'm'}</span>${est(c, 'resistente')}
+            </div>
+            <div class="small">${conns ? `Liga com o resto da empresa por: ${conns}. ` : ''}${linked}</div>
+            <ul class="cluster-alerts">${clusterAlerts(c).map(([t, txt]) => `<li class="ca-${t}">${esc(txt)}</li>`).join('')}</ul>
+            <details class="small"><summary>Ver as ${c.members.length} pessoas</summary>${c.members.map(personLink).join(', ')}</details>
+            <button class="small" data-action="highlight-cluster" data-id="${c.id}">Destacar no mapa</button>
+          </div>`;
+        })
+        .join('')}</div>`;
   }
 
   function selectPerson(id) {
@@ -2235,6 +2352,7 @@
     },
     // Atalho da tela de entrada para a área do administrador (gerar convite).
     'share-invite': () => shareInviteForm(),
+    'highlight-cluster': (id) => highlightCluster(Number(id)),
     'share-copy': () => {
       const inp = $('#share-link');
       copyText(inp.value, inp);

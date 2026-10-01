@@ -631,6 +631,38 @@
       c.influence = sum(mem.map((m) => m.influence));
       const st = mem.filter((m) => m.stance !== null).map((m) => m.stance);
       c.avgStance = st.length ? sum(st) / st.length : null;
+      c.departmentIds = [...depCount.keys()].filter(Boolean);
+      c.stanceCounts = { apoiador: 0, neutro: 0, resistente: 0, desconhecido: 0 };
+      c.stanceEstimated = { apoiador: 0, neutro: 0, resistente: 0 };
+      for (const m of mem) {
+        if (c.stanceCounts[m.stanceLabel] !== undefined) c.stanceCounts[m.stanceLabel]++;
+        if (m.stanceSource === 'inferido' && c.stanceEstimated[m.stanceLabel] !== undefined) c.stanceEstimated[m.stanceLabel]++;
+      }
+      c.hasFocal = focalIdx !== undefined && c.members.includes(g.people[focalIdx].id);
+
+      // Ligações com as outras turmas e quem faz essa ponte.
+      const idxs = c.members.map((id) => g.idx.get(id));
+      const inside = new Set(idxs);
+      let internal = 0;
+      const extBy = new Map();
+      const linksTo = new Map();
+      for (const i of idxs) {
+        for (const [j, w] of g.pos[i]) {
+          if (inside.has(j)) internal += w / 2;
+          else {
+            addTo(extBy, i, w);
+            addTo(linksTo, comm[j], w);
+          }
+        }
+      }
+      const size = idxs.length;
+      c.density = size > 1 ? sum(idxs.map((i) => [...g.pos[i].keys()].filter((j) => inside.has(j)).length)) / (size * (size - 1)) : 0;
+      c.internalStrength = internal;
+      c.externalStrength = sum([...extBy.values()]);
+      c.connectors = [...extBy.entries()]
+        .sort((a, b) => b[1] - a[1])
+        .map(([i, w]) => ({ id: g.people[i].id, strength: w }));
+      c.linksTo = [...linksTo.entries()].sort((a, b) => b[1] - a[1]).map(([to, w]) => ({ community: to, strength: w }));
     }
 
     // Setores (departamentos) e grupos

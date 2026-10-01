@@ -468,3 +468,21 @@ details.admin summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
 .gate-where:has(strong) { border-left: 4px solid var(--warn); text-align: left; }
 .share-steps { padding-left: 20px; }
 .share-steps li { margin-bottom: 10px; }
+
+/* ---------- turmas informais (clusters) no mapa ---------- */
+#cluster-panel { margin-top: 12px; }
+.cluster-tip { margin: 8px 0 0; }
+.cluster-intro h3 { margin-bottom: 4px; }
+.cluster-grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 12px; }
+.cluster-grid > * { min-width: 0; }
+.cluster-card { background: var(--surface); border: 1px solid var(--border); border-top: 4px solid var(--border); border-radius: var(--radius); padding: 12px 14px; display: flex; flex-direction: column; gap: 4px; cursor: pointer; }
+.cluster-card.active { box-shadow: 0 0 0 2px var(--accent); }
+.cluster-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 15px; }
+.cluster-stance { display: flex; flex-wrap: wrap; gap: 4px; align-items: center; margin: 2px 0; }
+.cluster-alerts { list-style: none; padding: 0; margin: 4px 0; display: grid; gap: 3px; }
+.cluster-alerts li { font-size: 12px; padding: 3px 8px; border-radius: 6px; background: var(--surface-2); border-left: 3px solid var(--neutral); }
+.cluster-alerts .ca-bad { border-left-color: var(--bad); }
+.cluster-alerts .ca-warn { border-left-color: var(--warn); }
+.cluster-alerts .ca-ok { border-left-color: var(--ok); }
+.cluster-alerts .ca-info { border-left-color: var(--accent); }
+.cluster-card button { align-self: flex-start; margin-top: 4px; }
