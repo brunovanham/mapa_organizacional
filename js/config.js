@@ -9,4 +9,7 @@
  */
 window.MAPA_CONFIG = {
   apiUrl: '',
+  // Repositório onde ficam as empresas (criptografadas). Precisa ser PÚBLICO
+  // para que o dono entre na empresa de qualquer lugar só com o código.
+  dataRepo: { owner: 'brunovanham', repo: 'mapa_organizacional_dados' },
 };

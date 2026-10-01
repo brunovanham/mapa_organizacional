@@ -224,6 +224,7 @@
   // nem servidor). Mesmo formato de arquivo; o "sha" é um contador de versão.
   const localKey = (cfg) => 'mapaOrganizacional.empresa.' + cfg.id;
   const CompanyLocal = {
+    hasLocal: (id) => !!readJSON('mapaOrganizacional.empresa.' + id),
     async read(cfg) {
       const rec = readJSON(localKey(cfg));
       if (!rec) return { data: null, sha: null };
@@ -243,6 +244,57 @@
       return next;
     },
   };
+
+  // ----- acesso pelo código de qualquer lugar
+  // Cada empresa online tem também  acessos/<id>.json : a chave do GitHub
+  // CIFRADA com o código da empresa. Com o repositório de dados público, um
+  // navegador novo lê esse arquivo sem chave, destrava-a com o código e
+  // passa a ler/gravar a empresa normalmente. Sem o código, nada é legível.
+  const accessPath = (id) => `acessos/${id}.json`;
+  const dataRepo = () => (root.MAPA_CONFIG && root.MAPA_CONFIG.dataRepo) || null;
+
+  async function publicRead(owner, repo, path) {
+    let res;
+    try {
+      res = await fetch(`${API}/repos/${encodeURIComponent(owner)}/${encodeURIComponent(repo)}/contents/${path}`, {
+        cache: 'no-store',
+        headers: { Accept: 'application/vnd.github+json' },
+      });
+    } catch (e) {
+      throw new Error('Sem conexão com a internet.');
+    }
+    if (res.status === 404) return null; // não existe, ou o repositório é privado
+    if (res.status === 403) throw new Error('O GitHub limitou as consultas deste computador. Tente de novo em alguns minutos.');
+    if (!res.ok) throw new Error(`GitHub respondeu ${res.status}.`);
+    const j = await res.json();
+    return JSON.parse(b64decode(j.content));
+  }
+
+  async function findOnlineAccess(id, keyB64) {
+    const repo = dataRepo();
+    if (!repo || !repo.owner || !repo.repo) return null;
+    const env = await publicRead(repo.owner, repo.repo, accessPath(id));
+    if (!env) return null;
+    const acc = await root.Vault.unseal(env, keyB64);
+    return { owner: acc.o, repo: acc.r, branch: acc.b || '', token: acc.t };
+  }
+
+  /** Grava (ou atualiza) o arquivo de acesso cifrado da empresa. */
+  async function ensureAccessFile(cfg) {
+    const gh = cfg.gh;
+    const file = { owner: gh.owner, repo: gh.repo, branch: gh.branch || '', token: gh.token, path: accessPath(cfg.id) };
+    const cur = await Remote.read(file);
+    if (cur.data) {
+      try {
+        const acc = await root.Vault.unseal(cur.data, cfg.keyB64);
+        if (acc.t === gh.token && acc.o === gh.owner && acc.r === gh.repo) return;
+      } catch (e) {
+        /* arquivo antigo/danificado: regrava */
+      }
+    }
+    const env = await root.Vault.seal({ o: gh.owner, r: gh.repo, b: gh.branch || '', t: gh.token }, cfg.keyB64);
+    await Remote.write(file, env, cur.sha, `Acesso da empresa ${cfg.id.slice(0, 8)}`);
+  }
 
   const b64url = (obj) => b64encode(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
   const fromB64url = (str) => JSON.parse(b64decode(decodeURIComponent(str).replace(/-/g, '+').replace(/_/g, '/')));
@@ -439,7 +491,12 @@
      */
     async enterCompany(opts) {
       const { id, keyB64 } = await root.Vault.open(opts.code);
-      const backend = opts.backend || { kind: 'api', apiUrl: opts.apiUrl };
+      let backend = opts.backend || { kind: 'api', apiUrl: opts.apiUrl };
+      // Navegador sem convite: procura a empresa online pelo próprio código.
+      if (backend.kind === 'local' && !opts.create && !root.CompanyLocal.hasLocal(id)) {
+        const gh = await findOnlineAccess(id, keyB64);
+        if (gh) backend = { kind: 'github', gh };
+      }
       const cfg =
         backend.kind === 'github'
           ? { mode: 'empresa', via: 'github', gh: backend.gh, id, keyB64 }
@@ -449,11 +506,7 @@
       const remote = await ({ github: CompanyGitHub, local: CompanyLocal }[backend.kind] || CompanyRemote).read(cfg);
       if (opts.create && remote.data) throw new Error('Já existe uma empresa com este código. Escolha outro código.');
       if (!opts.create && !remote.data)
-        throw new Error(
-          backend.kind === 'local'
-            ? 'Empresa não encontrada neste navegador. Se ela foi criada online, abra primeiro o LINK DE CONVITE neste navegador e depois digite o código. Confira também maiúsculas e minúsculas.'
-            : 'Nenhuma empresa encontrada com este código. Confira o código: letras maiúsculas e minúsculas fazem diferença.'
-        );
+        throw new Error('Nenhuma empresa encontrada com este código. Confira o código: letras maiúsculas e minúsculas fazem diferença.');
       clearTimeout(this.timer);
       this.setCfg(cfg, !!opts.remember);
       if (opts.create) {
@@ -471,6 +524,8 @@
         this.store.replace(remote.data, { fromRemote: true });
         this.setStatus('saved');
       }
+      // Garante o acesso pelo código em qualquer lugar (e atualiza a chave se o convite mudou).
+      if (cfg.via === 'github') ensureAccessFile(cfg).catch((e) => console.warn('Não foi possível gravar o acesso da empresa', e));
       if (this.hooks.onRemoteLoaded) this.hooks.onRemoteLoaded();
     },
 

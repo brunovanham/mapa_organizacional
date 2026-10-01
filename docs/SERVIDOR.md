@@ -4,6 +4,24 @@ Com isto, qualquer pessoa que abrir o site pode **criar a empresa dela** e acess
 **código que escolheu**. Cada empresa vira um arquivo JSON no seu repositório de dados, e cada
 pessoa só abre a empresa do código que tem.
 
+## Entrar de qualquer lugar só com o código
+
+Quando uma empresa é criada (ou aberta) com o link de convite, o sistema grava também
+`acessos/<id>.json`: a chave do GitHub **criptografada com o código da empresa**. Assim, num navegador
+novo, sem convite, basta digitar o código. O sistema lê esse arquivo, destrava a chave com o código e
+abre a empresa.
+
+Para isso o repositório de dados precisa ser **público**. Ninguém consegue ler nada sem o código:
+nem os dados, nem a chave. Cuidados:
+- Use códigos longos. Empresas novas exigem pelo menos 10 caracteres; frases funcionam bem
+  (ex.: `padaria-centro-azul`).
+- Quem descobrir o código de **uma** empresa obtém a chave de gravação. Mesmo assim, não lê as outras
+  empresas, porque cada uma tem o seu código.
+- Empresas criadas antes desta versão: abra-as **uma vez** no navegador que tem o convite. O arquivo
+  de acesso é criado nesse momento.
+
+Para manter o repositório privado, use o servidor (seção mais abaixo).
+
 ## Jeito mais simples: link de convite (sem servidor)
 
 Se você só vai passar o link para pessoas que conhece, **não precisa do Cloudflare**:

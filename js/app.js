@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '11';
+  const APP_VERSION = '12';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -1813,7 +1813,7 @@
       if (where)
         where.innerHTML =
           k === 'local'
-            ? '⚠️ Este navegador ainda <strong>não abriu o link de convite</strong>. Se a sua empresa está online, abra primeiro o link de convite que o administrador enviou. Sem ele, uma empresa nova fica salva só neste computador.'
+            ? '🔒 Sua empresa já está online? <strong>Basta digitar o código</strong>, de qualquer computador. Para <strong>criar</strong> uma empresa online, use o link de convite do administrador; sem ele, uma empresa nova fica salva só neste computador.'
             : '🔒 Os dados ficam <strong>criptografados e salvos online</strong>. Você acessa de qualquer computador com o mesmo código.';
       const first = $('#gate-enter [name="code"]');
       if (first) first.focus();
@@ -1833,6 +1833,7 @@
       if (!(f.name || '').trim()) return (msg.textContent = 'Digite o nome da empresa.');
       const chk = window.Vault.checkCode(code);
       if (!chk.ok) return (msg.textContent = chk.msg);
+      if (code.trim().length < 10) return (msg.textContent = 'Para empresas novas, use pelo menos 10 caracteres (ex.: uma frase como padaria-centro-azul).');
       if (code !== f.code2) return (msg.textContent = 'Os dois códigos não são iguais.');
     }
     const btn = $('button[type="submit"]', form);
@@ -1924,13 +1925,13 @@
       <details class="steps">
         <summary>Antes de gerar (uma única vez)</summary>
         <ol>
-          <li>Crie o repositório <strong>privado</strong> de dados, por exemplo <code>mapa_organizacional_dados</code>: <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a> → <em>Private</em> → <em>Add a README file</em>.</li>
+          <li>Crie o repositório de dados <code>mapa_organizacional_dados</code>: <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a> → <em>Public</em> → <em>Add a README file</em>. Ele precisa ser <strong>público</strong> para o dono entrar de qualquer lugar só com o código; o conteúdo fica todo criptografado.</li>
           <li>Crie a chave: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained token</a> → <em>Only select repositories</em> → o repositório de dados → <em>Contents: Read and write</em> → validade → <em>Generate token</em>.</li>
         </ol>
       </details>
       <div class="grid2">
         <label>Dono do repositório<input id="inv-owner" value="${esc(inv.owner || 'brunovanham')}"></label>
-        <label>Repositório de dados (privado)<input id="inv-repo" value="${esc(inv.repo || 'mapa_organizacional_dados')}"></label>
+ <label>Repositório de dados<input id="inv-repo" value="${esc(inv.repo || 'mapa_organizacional_dados')}"></label>
       </div>
       <label>Chave de acesso (token)<input id="inv-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
       <label class="chk"><input type="checkbox" id="inv-here" checked> Usar o convite também neste navegador</label>
@@ -2169,7 +2170,7 @@
       box.innerHTML = '<p class="muted small">Conferindo a chave no GitHub…</p>';
       try {
         const info = await G.checkInvite(inv);
-        if (!info.private && !confirm(`O repositório ${inv.owner}/${inv.repo} é PÚBLICO. Os dados continuam criptografados, mas o recomendado é usar um repositório privado. Continuar?`)) {
+        if (info.private && !confirm(`O repositório ${inv.owner}/${inv.repo} é PRIVADO. Assim, cada navegador novo precisará abrir o link de convite antes de entrar com o código.\n\nPara o dono entrar de qualquer lugar SÓ com o código, deixe o repositório PÚBLICO (os dados ficam criptografados).\n\nGerar o convite mesmo assim?`)) {
           box.innerHTML = '';
           return;
         }
@@ -2560,8 +2561,9 @@
   on('#gate-create [name="code"]', 'input', (e) => {
     const hint = $('#gate-create .code-hint');
     const c = window.Vault.checkCode(e.target.value);
-    hint.textContent = e.target.value ? c.msg : 'Mínimo de 8 caracteres. Letras maiúsculas e minúsculas fazem diferença.';
-    hint.className = 'small code-hint ' + (!c.ok ? 'neg-text' : c.level === 'forte' ? 'ok-text' : 'warn-text');
+    const short = e.target.value.trim().length < 10;
+    hint.textContent = !e.target.value ? 'Mínimo de 10 caracteres. Letras maiúsculas e minúsculas fazem diferença.' : short ? 'Use pelo menos 10 caracteres.' : c.msg;
+    hint.className = 'small code-hint ' + (short ? 'neg-text' : c.level === 'forte' ? 'ok-text' : 'warn-text');
   });
   G.consumeInviteLink(); // link "#convite=…" ativa as empresas neste navegador
   if (gateNeeded()) showGate(true);
