@@ -426,3 +426,21 @@ tr.row-neg td:first-child { box-shadow: inset 3px 0 0 var(--bad); }
   .cad { grid-template-columns: minmax(0, 1fr); }
 }
 code { overflow-wrap: anywhere; }
+
+/* ---------- tela de entrada (empresa por código) ---------- */
+.top-actions { display: flex; align-items: center; gap: 6px; margin-left: auto; order: 3; }
+.top-actions .sync-status { margin-left: 0; }
+.gate { position: fixed; inset: 0; z-index: 50; background: var(--bg); overflow-y: auto; padding: 32px 16px; }
+.gate[hidden] { display: none; }
+body.gated { overflow: hidden; }
+.gate-box { max-width: 880px; margin: 0 auto; text-align: center; }
+.gate-box h1 { font-size: 28px; margin: 12px 0 4px; }
+.gate-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 24px; text-align: left; align-items: start; }
+.gate-grid > * { min-width: 0; }
+.gate-grid h2 { font-size: 18px; margin-bottom: 12px; }
+.gate-grid .chk { margin-bottom: 12px; }
+.gate-msg { min-height: 1.4em; margin: 8px 0 0; font-size: 13px; }
+.gate-foot { margin-top: 16px; }
+.company-intro { margin-bottom: 12px; }
+details.admin summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
+@media (max-width: 760px) { .gate-grid { grid-template-columns: 1fr; } }

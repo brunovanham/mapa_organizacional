@@ -5,7 +5,7 @@
   "description": "Mapa de redes organizacionais (ONA): influência, clusters, resistência/boicote e simulação de saída.",
   "scripts": {
     "start": "python3 -m http.server 8080",
-    "test": "node --test tests/*.test.js"
+    "test": "node --test tests/*.test.js tests/*.test.mjs"
   },
   "license": "UNLICENSED"
 }

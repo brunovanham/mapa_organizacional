@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '4';
+  const APP_VERSION = '5';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -1632,12 +1632,75 @@
   const G = window.GitHubSync;
   const SYNC_LABEL = {
     local: ['warn', 'Salvo só neste navegador'],
-    loading: ['busy', 'Carregando do GitHub…'],
+    loading: ['busy', 'Carregando…'],
     dirty: ['busy', 'Alterações pendentes…'],
-    saving: ['busy', 'Salvando no GitHub…'],
-    saved: ['ok', 'Salvo no GitHub'],
-    error: ['bad', 'Erro ao salvar no GitHub'],
+    saving: ['busy', 'Salvando…'],
+    saved: ['ok', 'Salvo online'],
+    error: ['bad', 'Erro ao salvar online'],
   };
+  const API_URL = String((window.MAPA_CONFIG || {}).apiUrl || '').trim();
+  const NO_COMPANY_KEY = 'mapaOrganizacional.semEmpresa';
+  const sessionFlag = (v) => {
+    try {
+      if (v === undefined) return sessionStorage.getItem(NO_COMPANY_KEY) === '1';
+      if (v) sessionStorage.setItem(NO_COMPANY_KEY, '1');
+      else sessionStorage.removeItem(NO_COMPANY_KEY);
+    } catch (e) {
+      return false;
+    }
+  };
+
+  // ------------------------------------------------ tela de entrada (empresa)
+  function showGate(show) {
+    const gate = $('#gate');
+    gate.hidden = !show;
+    document.body.classList.toggle('gated', show);
+    if (show) {
+      $$('#gate .gate-msg').forEach((m) => (m.textContent = ''));
+      const first = $('#gate-enter [name="code"]');
+      if (first) first.focus();
+    }
+  }
+
+  function gateNeeded() {
+    return !!API_URL && !G.connected && !sessionFlag();
+  }
+
+  async function gateSubmit(form, create) {
+    const msg = $('.gate-msg', form);
+    const f = Object.fromEntries(new FormData(form).entries());
+    const code = f.code || '';
+    msg.className = 'gate-msg';
+    if (create) {
+      if (!(f.name || '').trim()) return (msg.textContent = 'Digite o nome da empresa.');
+      const chk = window.Vault.checkCode(code);
+      if (!chk.ok) return (msg.textContent = chk.msg);
+      if (code !== f.code2) return (msg.textContent = 'Os dois códigos não são iguais.');
+    }
+    const btn = $('button[type="submit"]', form);
+    btn.disabled = true;
+    msg.classList.add('muted');
+    msg.textContent = create ? 'Criando a empresa…' : 'Abrindo…';
+    try {
+      const initial = S.empty();
+      initial.settings.companyName = (f.name || '').trim();
+      await G.enterCompany({ apiUrl: API_URL, code, remember: !!f.remember, create, initialData: initial });
+      form.reset();
+      sessionFlag(false);
+      showGate(false);
+      fichaId = null;
+      selectedId = null;
+      lastLayoutKey = '';
+      setView(create ? 'colaboradores' : 'painel');
+      toast(create ? 'Empresa criada. Guarde bem o código de acesso!' : `Bem-vindo(a) à ${data().settings.companyName || 'empresa'}.`);
+    } catch (e) {
+      msg.className = 'gate-msg neg-text';
+      msg.textContent = e.message;
+    } finally {
+      btn.disabled = false;
+      renderSyncStatus();
+    }
+  }
 
   function renderSyncStatus() {
     const el = $('#sync-status');
@@ -1645,13 +1708,28 @@
     const time = G.status === 'saved' && G.state.savedAt ? ' · ' + new Date(G.state.savedAt).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' }) : '';
     el.className = 'sync-status s-' + tone;
     el.innerHTML = `<i></i>${esc(label + time)}`;
-    el.title = G.error || (G.connected ? `${G.cfg.owner}/${G.cfg.repo} · ${G.cfg.path}` : 'Configure o GitHub na aba Dados para salvar online');
+    el.title = G.error || (G.isCompany ? 'Dados da empresa, criptografados' : G.connected ? `${G.cfg.owner}/${G.cfg.repo} · ${G.cfg.path}` : 'Os dados estão só neste navegador');
+    $('#leave-btn').hidden = !G.isCompany;
+    $('#gate-btn').hidden = !API_URL || G.connected;
     if (currentView === 'dados') renderGitHubCard();
   }
 
   function renderGitHubCard() {
     const box = $('#gh-card');
     if (!box) return;
+    if (G.isCompany) {
+      box.innerHTML = `
+        <h3>Empresa: ${esc(data().settings.companyName || '(sem nome)')} <span class="badge st-apoiador">conectada</span></h3>
+        <p>Os dados desta empresa ficam salvos online, <strong>criptografados com o código de acesso</strong>. Ninguém sem o código consegue lê-los.</p>
+        <p class="small">Situação: <strong>${esc((SYNC_LABEL[G.status] || [])[1] || '')}</strong>${G.error ? ` — <span class="neg-text">${esc(G.error)}</span>` : ''}</p>
+        <p class="small muted">Para outra pessoa acessar esta empresa, passe a ela o código por um canal privado. Ao terminar num computador compartilhado, clique em <em>Sair da empresa</em>.</p>
+        <div class="btn-row">
+          <button class="primary" data-action="gh-save">Salvar agora</button>
+          <button data-action="gh-reload">Recarregar</button>
+          <button class="danger" data-action="leave-company">Sair da empresa</button>
+        </div>`;
+      return;
+    }
     if (G.connected) {
       const c = G.cfg;
       box.innerHTML = `
@@ -1671,7 +1749,13 @@
         <div class="btn-row"><button class="danger" data-action="gh-disconnect">Desconectar este navegador</button></div>`;
       return;
     }
-    box.innerHTML = `
+    const companyIntro = API_URL
+      ? `<div class="company-intro"><h3>Empresa online</h3>
+          <p>Você está usando o sistema <strong>sem empresa</strong>: os dados ficam só neste navegador.</p>
+          <div class="btn-row"><button class="primary" data-action="open-gate">Entrar ou criar uma empresa</button></div></div>
+         <details class="admin"><summary>Modo administrador: gravar direto no GitHub com chave de acesso</summary>`
+      : '';
+    box.innerHTML = companyIntro + `
       <h3>Armazenamento no GitHub <span class="badge warn">não configurado</span></h3>
       <p>Hoje os dados estão salvos só neste navegador. Conecte a um repositório <strong>privado</strong> do GitHub para gravar e ler os dados de qualquer computador, sem banco de dados e sem login.</p>
       <details class="steps">
@@ -1691,6 +1775,7 @@
       </div>
       <label>Chave de acesso (token)<input id="gh-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
       <div class="btn-row"><button class="primary" data-action="gh-connect">Conectar</button></div>
+      ${API_URL ? '</details>' : ''}
       ${G.error ? `<p class="neg-text small">${esc(G.error)}</p>` : ''}`;
   }
 
@@ -1875,6 +1960,27 @@
       $('#paste-list').value = '';
       toast(`${n} colaborador(es) adicionado(s).`);
     },
+    'open-gate': () => showGate(true),
+    'gate-demo': () => {
+      sessionFlag(true);
+      showGate(false);
+      if (!data().people.length) S.replace(window.SAMPLE_DATA);
+      setView('painel');
+      toast('Exemplo fictício: os dados ficam só neste navegador.');
+    },
+    'leave-company': async () => {
+      if (G.state.dirty) await G.push();
+      if (G.state.dirty && !confirm('Algumas alterações ainda não foram salvas online. Sair mesmo assim?')) return;
+      G.leave(S.empty());
+      sessionFlag(false);
+      fichaId = null;
+      selectedId = null;
+      lastLayoutKey = '';
+      renderSyncStatus();
+      if (API_URL) showGate(true);
+      else setView('colaboradores');
+      toast('Você saiu da empresa. Os dados foram apagados deste navegador.');
+    },
     'gh-connect': async () => {
       const cfg = { owner: $('#gh-owner').value, repo: $('#gh-repo').value, path: $('#gh-path').value, branch: $('#gh-branch').value, token: $('#gh-token').value };
       if (!cfg.owner.trim() || !cfg.repo.trim() || !cfg.token.trim()) return toast('Preencha dono, repositório e chave de acesso.');
@@ -2025,7 +2131,8 @@
       download(`mapa-organizacional-${stamp}.json`, S.exportJSON());
     },
     'load-sample': () => {
-      if (data().people.length && !confirm('Substituir os dados atuais pelo exemplo fictício? Exporte antes se quiser guardar.')) return;
+      const online = G.connected ? ' Atenção: isto substitui também os dados salvos online desta empresa (a versão anterior fica no histórico).' : '';
+      if (data().people.length && !confirm(`Substituir os dados atuais pelo exemplo fictício?${online}`)) return;
       selectedId = null;
       lastLayoutKey = '';
       fichaId = null;
@@ -2202,6 +2309,22 @@
 
   recompute();
   setView(data().people.length ? 'painel' : 'colaboradores');
+  on('#gate-enter', 'submit', (e) => {
+    e.preventDefault();
+    gateSubmit(e.target, false);
+  });
+  on('#gate-create', 'submit', (e) => {
+    e.preventDefault();
+    gateSubmit(e.target, true);
+  });
+  // Dica de força do código enquanto digita.
+  on('#gate-create [name="code"]', 'input', (e) => {
+    const hint = $('#gate-create .code-hint');
+    const c = window.Vault.checkCode(e.target.value);
+    hint.textContent = e.target.value ? c.msg : 'Mínimo de 8 caracteres. Letras maiúsculas e minúsculas fazem diferença.';
+    hint.className = 'small code-hint ' + (!c.ok ? 'neg-text' : c.level === 'forte' ? 'ok-text' : 'warn-text');
+  });
+  if (gateNeeded()) showGate(true);
   G.init(S, {
     onStatus: renderSyncStatus,
     confirm: (msg) => confirm(msg),

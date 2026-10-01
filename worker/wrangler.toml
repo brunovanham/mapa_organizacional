@@ -1,0 +1,13 @@
+# Configuração do Cloudflare Worker (API das empresas).
+# Publicar:  npx wrangler deploy
+# Chave do GitHub (segredo, nunca no código):  npx wrangler secret put GITHUB_TOKEN
+name = "mapa-organizacional-api"
+main = "src/index.js"
+compatibility_date = "2026-09-01"
+
+[vars]
+GITHUB_OWNER = "brunovanham"
+GITHUB_REPO = "mapa_organizacional_dados"
+DATA_DIR = "empresas"
+# Sites autorizados a usar a API (separados por vírgula).
+ALLOWED_ORIGINS = "https://brunovanham.github.io"

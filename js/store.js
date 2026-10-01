@@ -1,6 +1,6 @@
 /*
- * store.js — estado e persistência local (localStorage + exportação JSON).
- * Os dados nunca saem do navegador, a não ser que o usuário exporte o arquivo.
+ * store.js — estado e cópia local dos dados (localStorage ou sessionStorage).
+ * A cópia "oficial" fica no GitHub (github-sync.js) quando conectado.
  */
 (function (root) {
   'use strict';
@@ -20,11 +20,27 @@
   const listeners = [];
   const persistListeners = [];
   let version = 0;
+  // Onde fica a cópia local: localStorage ("lembrar neste computador") ou
+  // sessionStorage (apagada ao fechar a aba). A sessão tem prioridade.
+  const area = (kind) => {
+    try {
+      return kind === 'session' ? sessionStorage : localStorage;
+    } catch (e) {
+      return null;
+    }
+  };
+  let storageKind = (() => {
+    try {
+      return sessionStorage.getItem(KEY) ? 'session' : 'local';
+    } catch (e) {
+      return 'local';
+    }
+  })();
   let data = load();
 
   function load() {
     try {
-      const raw = localStorage.getItem(KEY);
+      const raw = area(storageKind).getItem(KEY);
       if (raw) return migrate(JSON.parse(raw));
     } catch (e) {
       console.warn('Falha ao ler dados locais', e);
@@ -76,7 +92,7 @@
   function save(silent, meta) {
     version++;
     try {
-      localStorage.setItem(KEY, JSON.stringify(data));
+      area(storageKind).setItem(KEY, JSON.stringify(data));
     } catch (e) {
       console.warn('Falha ao salvar dados locais', e);
     }
@@ -91,6 +107,22 @@
     get version() {
       return version;
     },
+    // Troca o local da cópia e apaga a do outro lugar.
+    useStorage(kind) {
+      const next = kind === 'session' ? 'session' : 'local';
+      try {
+        area(next === 'session' ? 'local' : 'session').removeItem(KEY);
+      } catch (e) {
+        /* indisponível */
+      }
+      storageKind = next;
+      try {
+        area(storageKind).setItem(KEY, JSON.stringify(data));
+      } catch (e) {
+        /* indisponível */
+      }
+    },
+    empty,
     onChange(fn) {
       listeners.push(fn);
     },

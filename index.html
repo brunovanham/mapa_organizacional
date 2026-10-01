@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="app-version" content="4">
+  <meta name="app-version" content="5">
   <title>Mapa Organizacional</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="css/style.css?v=4">
+  <link rel="stylesheet" href="css/style.css?v=5">
 </head>
 <body>
   <header class="topbar">
@@ -14,7 +14,11 @@
       <strong>Mapa Organizacional</strong>
       <span id="company-name" class="muted"></span>
     </div>
-    <button id="sync-status" class="sync-status" data-action="goto" data-id="dados" title="Onde os dados estão salvos"></button>
+    <div class="top-actions">
+      <button id="sync-status" class="sync-status" data-action="goto" data-id="dados" title="Onde os dados estão salvos"></button>
+      <button id="gate-btn" class="small" data-action="open-gate" hidden>Entrar numa empresa</button>
+      <button id="leave-btn" class="small" data-action="leave-company" hidden>Sair da empresa</button>
+    </div>
     <nav class="tabs" id="tabs">
       <button data-view="painel" class="active">Painel</button>
       <button data-view="colaboradores">Colaboradores</button>
@@ -171,14 +175,45 @@
     </section>
   </main>
 
+  <!-- Tela de entrada: empresa por código -->
+  <div id="gate" class="gate" hidden>
+    <div class="gate-box">
+      <h1>Mapa Organizacional</h1>
+      <p class="muted">Quem influencia quem, quem sabe o quê e onde estão os riscos da sua empresa.</p>
+      <div class="gate-grid">
+        <form class="card" id="gate-enter" autocomplete="on">
+          <h2>Entrar na minha empresa</h2>
+          <label>Código de acesso<input type="password" name="code" autocomplete="current-password" required></label>
+          <label class="chk"><input type="checkbox" name="remember"> Lembrar neste computador</label>
+          <button class="primary full" type="submit">Entrar</button>
+          <p class="gate-msg" role="alert"></p>
+        </form>
+        <form class="card" id="gate-create" autocomplete="off">
+          <h2>Criar nova empresa</h2>
+          <label>Nome da empresa<input name="name" required maxlength="80"></label>
+          <label>Escolha um código de acesso<input type="password" name="code" autocomplete="new-password" required></label>
+          <p class="small code-hint muted">Mínimo de 8 caracteres. Letras maiúsculas e minúsculas fazem diferença.</p>
+          <label>Repita o código<input type="password" name="code2" autocomplete="new-password" required></label>
+          <label class="chk"><input type="checkbox" name="remember"> Lembrar neste computador</label>
+          <p class="notice-inline small">Anote o código em lugar seguro. <strong>Sem ele ninguém abre os dados, nem o administrador do sistema</strong>, porque tudo é guardado criptografado. Quem tiver o código pode ver e alterar a empresa.</p>
+          <button class="primary full" type="submit">Criar empresa</button>
+          <p class="gate-msg" role="alert"></p>
+        </form>
+      </div>
+      <p class="gate-foot"><button class="link" data-action="gate-demo">Só quero conhecer com um exemplo fictício</button></p>
+    </div>
+  </div>
+
   <dialog id="modal"><form method="dialog" id="modal-form"></form></dialog>
   <div id="toast" class="toast"></div>
 
-  <script src="vendor/cytoscape.min.js?v=4"></script>
-  <script src="js/analytics.js?v=4"></script>
-  <script src="js/sample-data.js?v=4"></script>
-  <script src="js/store.js?v=4"></script>
-  <script src="js/github-sync.js?v=4"></script>
-  <script src="js/app.js?v=4"></script>
+  <script src="vendor/cytoscape.min.js?v=5"></script>
+  <script src="js/analytics.js?v=5"></script>
+  <script src="js/sample-data.js?v=5"></script>
+  <script src="js/config.js?v=5"></script>
+  <script src="js/vault.js?v=5"></script>
+  <script src="js/store.js?v=5"></script>
+  <script src="js/github-sync.js?v=5"></script>
+  <script src="js/app.js?v=5"></script>
 </body>
 </html>
