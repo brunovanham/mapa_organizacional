@@ -1,4 +1,6 @@
-# Publica a interface no GitHub Pages a cada push no branch padrão.
+# Roda os testes e publica a interface no GitHub Pages a cada push no branch padrão
+# (quando o Pages está configurado com "Source: GitHub Actions"; no modo
+# "Deploy from branch" o próprio GitHub publica e este job só confirma).
 # Só publica o código (público). Os dados ficam num repositório PRIVADO separado.
 name: Publicar interface (GitHub Pages)
 
@@ -38,10 +40,14 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          if gh api "repos/${{ github.repository }}/pages" >/dev/null 2>&1; then
+          tipo=$(gh api "repos/${{ github.repository }}/pages" --jq .build_type 2>/dev/null || echo "desativado")
+          if [ "$tipo" = "workflow" ]; then
             echo "ativo=true" >> "$GITHUB_OUTPUT"
+          elif [ "$tipo" = "legacy" ]; then
+            echo "::notice::O GitHub Pages publica direto do branch (Deploy from branch); nada a fazer aqui."
+            echo "ativo=false" >> "$GITHUB_OUTPUT"
           else
-            echo "::notice::GitHub Pages ainda não está ativado. Ative em Settings → Pages → Source: GitHub Actions e rode este workflow de novo."
+            echo "::notice::GitHub Pages não está ativado. Ative em Settings → Pages."
             echo "ativo=false" >> "$GITHUB_OUTPUT"
           fi
       - uses: actions/checkout@v4
