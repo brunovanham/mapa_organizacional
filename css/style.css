@@ -460,3 +460,5 @@ details.admin summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
 .confirm-strip .count { font-size: 13px; font-weight: 600; background: var(--surface-2); border-radius: 10px; padding: 1px 9px; }
 .confirm-list { columns: 2; padding-left: 18px; margin: 0; }
 @media (max-width: 900px) { .confirm-list { columns: 1; } }
+.dup-opts { margin: 8px 0; }
+.dup-opts label.chk { display: flex; margin: 6px 0; align-items: baseline; }

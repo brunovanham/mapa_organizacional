@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '6';
+  const APP_VERSION = '7';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -661,6 +661,7 @@
         <button data-action="open-ficha" data-id="${esc(ids[idx - 1] || '')}" ${idx > 0 ? '' : 'disabled'}>← Anterior</button>
         <button data-action="open-ficha" data-id="${esc(ids[idx + 1] || '')}" ${idx < ids.length - 1 ? '' : 'disabled'}>Próximo →</button>
         <button data-action="new-person">+ Novo colaborador</button>
+        <button data-action="duplicate-person" data-id="${esc(p.id)}" title="Criar outra pessoa com cargo, setor, grupos e conhecimentos parecidos">Duplicar</button>
         <span class="spacer"></span>
         <button data-action="select-person" data-id="${esc(p.id)}">Ver no mapa</button>
         <button class="danger" data-action="delete-person" data-id="${esc(p.id)}">Excluir</button>
@@ -698,6 +699,74 @@
         onDone(text);
       }
     );
+  }
+
+  // Relações que fazem sentido copiar: as de trabalho. Amizade, parentes,
+  // conflitos e boicotes são pessoais e nunca são copiados.
+  const COPYABLE_REL = (r) => !['familiar', 'amizade'].includes(r.type) && A.sentimentOf(r) >= 0;
+
+  function duplicateForm(src) {
+    const rels = linksOf(src.id).filter(COPYABLE_REL);
+    const skipped = linksOf(src.id).length - rels.length;
+    const nSkills = (src.skills || []).length;
+    const nGroups = (src.groups || []).length;
+    openModal(
+      `Duplicar ${src.name || 'colaborador'}`,
+      `<p class="muted small">Cria uma nova pessoa a partir da ficha de <strong>${esc(src.name)}</strong>. Depois é só ajustar o que for diferente.</p>
+       <label>Nome do novo colaborador<input name="name" required placeholder="Nome completo"></label>
+       <fieldset class="dup-opts"><legend>O que copiar</legend>
+         <label class="chk"><input type="checkbox" name="job" checked> Cargo, setor, nível e chefe direto <span class="muted small">(${esc(src.role || 'sem cargo')} · ${esc(depName(src.departmentId))})</span></label>
+         <label class="chk"><input type="checkbox" name="groups" ${nGroups ? 'checked' : 'disabled'}> Grupos / equipes <span class="muted small">(${nGroups})</span></label>
+         <label class="chk"><input type="checkbox" name="skills" ${nSkills ? 'checked' : 'disabled'}> Conhecimentos marcados <span class="muted small">(${nSkills})</span></label>
+         <label class="chk"><input type="checkbox" name="rels" ${rels.length ? '' : 'disabled'}> Relações de trabalho com as mesmas pessoas <span class="muted small">(${rels.length})</span></label>
+       </fieldset>
+       <p class="muted small"><strong>Não são copiados:</strong> as notas (desempenho, engajamento, postura e difícil de substituir), porque são avaliações individuais e devem ser dadas só com certeza; as observações${skipped ? `; e ${skipped} relação(ões) pessoal(is) — amizades, parentes, conflitos ou boicotes` : ''}.</p>`,
+      (f) => {
+        const name = (f.name || '').trim();
+        if (!name) {
+          toast('Digite o nome do novo colaborador.');
+          return false;
+        }
+        if (findPersonByName(name) && findPersonByName(name).name.toLowerCase() === name.toLowerCase() && !confirm(`Já existe "${name}". Criar mesmo assim?`)) return false;
+        const p = S.upsert(
+          'people',
+          {
+            name,
+            role: f.job ? src.role || '' : '',
+            departmentId: f.job ? src.departmentId || null : null,
+            level: f.job ? src.level || 2 : 2,
+            managerId: f.job ? src.managerId || null : null,
+            tenure: null,
+            knowledge: null,
+            performance: null,
+            engagement: null,
+            stance: null,
+            gradeNotes: {},
+            skills: f.skills ? [...(src.skills || [])] : [],
+            groups: f.groups ? [...(src.groups || [])] : [],
+            notes: '',
+          },
+          'p',
+          { silent: true }
+        );
+        if (f.rels) {
+          const items = rels.map((r) => ({
+            source: r.source === src.id ? p.id : r.source,
+            target: r.target === src.id ? p.id : r.target,
+            type: r.type,
+            strength: r.strength,
+            sentiment: r.sentiment ?? null,
+            notes: '',
+          }));
+          S.addMany('relations', items, 'r', { silent: true });
+        }
+        recompute();
+        openFicha(p.id);
+        toast(`${name} criado(a) a partir de ${src.name}. Dê as notas só quando tiver certeza.`);
+      }
+    );
+    const inp = $('#modal-form [name="name"]');
+    if (inp) inp.focus();
   }
 
   const fichaLinkDefaults = { type: 'colaboracao', strength: 3, sentiment: '' };
@@ -2007,6 +2076,7 @@
       const p = newPerson('');
       openFicha(p.id, true);
     },
+    'duplicate-person': (id) => duplicateForm(person(id)),
     'delete-person': (id) => {
       if (!confirm(`Excluir ${pname(id)} e todos os seus vínculos?`)) return;
       if (selectedId === id) selectedId = null;
