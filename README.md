@@ -45,18 +45,22 @@ Também funciona sem GitHub: basta abrir `index.html` no navegador, e os dados f
 
 | Aba | Para quê |
 |---|---|
-| **Painel** | As respostas para o gerente: *com quem ter cuidado*, *trazer para o seu lado*, *pessoas influentes*, *demissão é risco*, *onde é possível cortar* e *aliados*. Inclui uma matriz (custo de saída × posição) e uma ação recomendada por pessoa. |
-| **Colaboradores** | Ficha de cadastro rápido, salva automaticamente: dados, setor, grupos/equipes, notas por clique (desempenho, conhecimento crítico, engajamento, posição em relação ao gerente), habilidades e vínculos. Digite o nome, escolha o tipo e a força, e se a pessoa não existir ela é criada. Também aceita colar uma lista de nomes. |
-| Mapa | Rede interativa colorida por setor, grupo, cluster ou posição. |
-| Setores e grupos | Coesão, abertura, conflitos, desempenho e posição média de cada setor e grupo. |
-| Relações | Lista completa de vínculos e cadastro em lote. |
-| Análise | Rankings (influência, PageRank, intermediação), clusters, pares-chave, conflitos, organização "sombra" e pontos únicos de falha. |
-| Resistência | Núcleos de resistência, porteiros do gerente e prioridade de engajamento. |
-| Simulação | O que acontece se uma ou mais pessoas saírem: custo operacional, redução de resistência e contágio. |
+| **Painel** | As respostas para o gerente: *atenção: ter cuidado*, *conquistar para o seu lado*, *quem tem voz*, *não pode perder*, *onde dá para cortar* e *aliados*, cada uma com o motivo em uma frase. Tem também o *mapa de decisão* (impacto se sair × postura com o gerente) e o que fazer com cada pessoa. |
+| **Colaboradores** | Ficha de cadastro, salva sozinha: setor, grupos, notas por clique (desempenho, se é difícil de substituir, engajamento, postura com o gerente), **checklist de conhecimentos** e relações (tipo, frequência e clima). |
+| **Conhecimentos** | A lista do que é importante saber na empresa, por categoria e importância (essencial, importante, desejável). Tem uma lista sugerida pronta e mostra **quem sabe o quê** e o que só uma pessoa sabe. |
+| Mapa | Desenho das relações, colorido por setor, postura, grupo ou turma informal. |
+| Setores e grupos | União da equipe, contato com outras áreas, conflitos, desempenho e postura média. |
+| Relações | Lista de todas as relações e cadastro rápido em lote. |
+| Resistência | Grupos de resistência, por quem passa a comunicação do gerente e quem conquistar primeiro. |
+| E se sair? | Simula a saída de uma ou mais pessoas: impacto (0 a 100), conhecimento perdido, colegas que podem sair junto e quanto cai a resistência. Inclui uma frase-resumo. |
+| Análise detalhada | Rankings, turmas informais, duplas importantes, conflitos, cargo × influência real e dependências perigosas. |
 | Ocorrências | Registro de fatos (boicote, retenção de informação…) que embasam conversas e decisões. |
-| Dados | GitHub, link de acesso, backup JSON, importação CSV e exemplo fictício. |
+| Dados | GitHub, link de acesso, backup, importação CSV e exemplo fictício. |
 
-Ordem recomendada: **Colaboradores** (cadastro, notas e vínculos) → definir o gerente como *pessoa focal* no Painel → **Painel**.
+A linguagem é pensada para quem não é especialista: os índices aparecem como *Muito baixa … Muito alta* em vez de
+números soltos, a postura aparece em palavras (*Apoia*, *Tende a resistir*…), e cada termo tem um **?** com a explicação.
+
+Ordem recomendada: **Conhecimentos** (montar a lista) → **Colaboradores** (cadastro, notas, conhecimentos e relações) → escolher o gerente no **Painel**.
 
 A metodologia, as fórmulas e o plano de ação estão em [`docs/GUIA.md`](docs/GUIA.md).
 

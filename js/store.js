@@ -5,6 +5,7 @@
 (function (root) {
   'use strict';
   const KEY = 'mapaOrganizacional.v1';
+  const uid = (prefix) => prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
   const empty = () => ({
     version: 1,
@@ -13,9 +14,8 @@
     people: [],
     relations: [],
     incidents: [],
+    knowledge: [],
   });
-
-  const uid = (prefix) => prefix + Date.now().toString(36) + Math.random().toString(36).slice(2, 7);
 
   const listeners = [];
   const persistListeners = [];
@@ -34,7 +34,7 @@
 
   function migrate(d) {
     const base = empty();
-    return {
+    const out = {
       ...base,
       ...d,
       settings: { ...base.settings, ...(d.settings || {}) },
@@ -42,7 +42,33 @@
       people: d.people || [],
       relations: d.relations || [],
       incidents: d.incidents || [],
+      knowledge: d.knowledge || [],
     };
+    // Versões antigas guardavam conhecimentos como texto livre: cada texto
+    // vira um item do catálogo e a pessoa passa a apontar para o item.
+    const byId = new Map(out.knowledge.map((k) => [k.id, k]));
+    const byName = new Map(out.knowledge.map((k) => [k.name.trim().toLowerCase(), k]));
+    for (const p of out.people) {
+      p.skills = [
+        ...new Set(
+          (p.skills || []).map((s) => {
+            if (byId.has(s)) return s;
+            const key = String(s).trim().toLowerCase();
+            if (!key) return null;
+            let k = byName.get(key);
+            if (!k) {
+              const name = String(s).trim();
+              k = { id: uid('k'), name: name.charAt(0).toUpperCase() + name.slice(1), category: 'Outros', importance: 2 };
+              out.knowledge.push(k);
+              byId.set(k.id, k);
+              byName.set(key, k);
+            }
+            return k.id;
+          })
+        ),
+      ].filter(Boolean);
+    }
+    return out;
   }
 
   // silent: grava sem notificar a interface (usado na ficha, para não perder o foco).
@@ -111,11 +137,15 @@
         });
         if (data.settings.focalId === id) data.settings.focalId = null;
       }
+      if (collection === 'knowledge') {
+        data.people.forEach((p) => (p.skills = (p.skills || []).filter((k) => k !== id)));
+      }
       if (collection === 'departments') {
         data.people.forEach((p) => p.departmentId === id && (p.departmentId = null));
       }
       save(opts && opts.silent);
     },
+    uid,
     exportJSON() {
       return JSON.stringify(data, null, 2);
     },

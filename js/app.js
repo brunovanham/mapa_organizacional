@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '3';
+  const APP_VERSION = '4';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -38,21 +38,48 @@
   const fx = (v, d = 2) => (v === null || v === undefined || Number.isNaN(v) ? '—' : Number(v).toFixed(d));
   const cssVar = (name) => getComputedStyle(document.documentElement).getPropertyValue(name).trim();
 
-  const STANCE_OPTIONS = [
-    ['', 'Desconhecido (inferir)'],
-    ['2', '+2 Apoia ativamente'],
-    ['1', '+1 Tende a apoiar'],
-    ['0', '0 Neutro'],
-    ['-1', '−1 Tende a resistir'],
-    ['-2', '−2 Resiste / boicota'],
-  ];
+  // Escalas em palavras, para quem não é especialista.
   const SENTIMENT_OPTIONS = [
-    ['', 'Padrão do tipo'],
-    ['2', '+2 Muito positiva'],
-    ['1', '+1 Positiva'],
-    ['0', '0 Neutra'],
-    ['-1', '−1 Tensa'],
-    ['-2', '−2 Hostil'],
+    ['', 'Clima: normal para o tipo'],
+    ['2', 'Clima muito bom'],
+    ['1', 'Clima bom'],
+    ['0', 'Clima neutro'],
+    ['-1', 'Clima tenso'],
+    ['-2', 'Clima hostil'],
+  ];
+  const SENTIMENT_TEXT = { 2: 'clima muito bom', 1: 'clima bom', 0: 'clima neutro', '-1': 'clima tenso', '-2': 'clima hostil' };
+  const STRENGTH_OPTIONS = [
+    [1, 'Raramente'],
+    [2, 'Às vezes'],
+    [3, 'Toda semana'],
+    [4, 'Quase todo dia'],
+    [5, 'Todo dia / muito próximos'],
+  ];
+  const STRENGTH_TEXT = Object.fromEntries(STRENGTH_OPTIONS);
+  const LEVEL_WORDS = ['Muito baixa', 'Baixa', 'Média', 'Alta', 'Muito alta'];
+  // Converte um índice de 0 a 1 em palavra (Baixa, Média, Alta…).
+  const nivel = (v) => (v === null || v === undefined || Number.isNaN(v) ? '—' : LEVEL_WORDS[Math.min(4, Math.floor(Math.max(0, v) * 5))]);
+  const STANCE_SOURCE_TEXT = {
+    informado: 'avaliado por você',
+    'relação direta': 'pela relação com o gerente',
+    ocorrências: 'pelas ocorrências registradas',
+    inferido: 'estimado pelo sistema — confirme',
+  };
+  function stanceText(m) {
+    if (!m) return '';
+    if (m.stanceLabel === 'focal') return 'Gerente';
+    const v = m.stance;
+    if (v === null || v === undefined) return 'Sem informação';
+    if (v >= 1.5) return 'Apoia';
+    if (v >= 0.75) return 'Tende a apoiar';
+    if (v > -0.75) return 'Neutro';
+    if (v > -1.5) return 'Tende a resistir';
+    return 'Resiste';
+  }
+  const IMPORTANCE_OPTIONS = [
+    [3, 'Essencial'],
+    [2, 'Importante'],
+    [1, 'Desejável'],
   ];
   const STANCE_COLORS = () => ({
     apoiador: cssVar('--ok'),
@@ -110,12 +137,10 @@
   const depOptions = (selected) =>
     '<option value="">—</option>' + options(data().departments.map((d) => [d.id, d.name]), selected);
 
-  function stanceBadge(m) {
+  function stanceBadge(m, withSource = true) {
     if (!m) return '';
-    const l = m.stanceLabel;
-    const src = m.stanceSource ? ` <span class="muted small">(${esc(m.stanceSource)})</span>` : '';
-    const val = m.stance === null || l === 'focal' ? '' : ` ${fx(m.stance, 1)}`;
-    return `<span class="badge st-${l}">${esc(l)}${val}</span>${src}`;
+    const src = withSource && m.stanceSource ? ` <span class="muted small">${esc(STANCE_SOURCE_TEXT[m.stanceSource] || m.stanceSource)}</span>` : '';
+    return `<span class="badge st-${m.stanceLabel}">${esc(stanceText(m))}</span>${src}`;
   }
 
   function personLink(id) {
@@ -150,13 +175,17 @@
   }
 
   const bar = (v, cls) => `<span class="bar ${cls || ''}"><span style="width:${Math.round(Math.max(0, Math.min(1, v)) * 100)}%"></span></span>`;
+  // Barra + palavra (ex.: ▮▮▮▯ Alta) no lugar de números como 0,65.
+  const meter = (v, cls) => `${bar(v, cls)} <span class="lvl">${nivel(v)}</span>`;
+  // Ícone "?" com explicação ao passar o mouse ou tocar.
+  const help = (text) => `<span class="help" tabindex="0" title="${esc(text)}" aria-label="${esc(text)}">?</span>`;
   const kpi = (label, value, hint) =>
     `<div class="kpi"><div class="kpi-v">${value}</div><div class="kpi-l">${esc(label)}</div>${hint ? `<div class="kpi-h">${esc(hint)}</div>` : ''}</div>`;
 
   function emptyState(msg) {
     return `<div class="empty card"><p>${msg}</p>
       <p><button class="primary" data-action="load-sample">Carregar exemplo fictício</button>
-      <button data-action="goto" data-id="pessoas">Cadastrar pessoas</button></p></div>`;
+      <button data-action="goto" data-id="colaboradores">Cadastrar colaboradores</button></p></div>`;
   }
 
   // ------------------------------------------------------------- views
@@ -180,6 +209,7 @@
       simulacao: renderSimulation,
       ocorrencias: renderIncidents,
       dados: renderData,
+      conhecimentos: renderConhecimentos,
     }[currentView];
     if (r) r();
   }
@@ -366,18 +396,20 @@
     let items = [];
     if (colorBy === 'stance') {
       const c = STANCE_COLORS();
-      items = Object.entries(c).map(([k, v]) => [k, v]);
+      const names = { apoiador: 'apoia o gerente', neutro: 'neutro', resistente: 'resiste ao gerente', desconhecido: 'sem informação', focal: 'gerente' };
+      items = Object.entries(c).map(([k, v]) => [names[k] || k, v]);
     } else if (colorBy === 'group') {
       items = allGroups().map((g, i) => [g, CLUSTER_PALETTE[i % CLUSTER_PALETTE.length]]).concat([['sem grupo', cssVar('--unknown')]]);
     } else if (colorBy === 'community') {
-      items = model.communities.map((c) => [`Cluster ${c.id + 1} (${pname(c.leader)})`, CLUSTER_PALETTE[c.id % CLUSTER_PALETTE.length]]);
+      items = model.communities.map((c) => [`Turma ${c.id + 1} (de ${pname(c.leader)})`, CLUSTER_PALETTE[c.id % CLUSTER_PALETTE.length]]);
     } else {
       items = data().departments.map((d) => [d.name, d.color]);
     }
     $('#legend').innerHTML =
       items.map(([l, c]) => `<span><i style="background:${esc(c)}"></i>${esc(l)}</span>`).join('') +
-      `<span><i class="ln neg"></i>conflito/boicote</span><span><i class="ln fam"></i>familiar</span>` +
-      `<span>★ pessoa focal</span><span><i class="ring"></i>ponto único de conexão</span>`;
+      `<span><i class="ln neg"></i>conflito ou boicote</span><span><i class="ln fam"></i>parentes ou casal</span>` +
+      `<span>★ gerente</span><span><i class="ring"></i>única ligação entre partes da equipe</span>` +
+      `<span>tamanho do círculo = ${esc(($('#size-by').selectedOptions[0] || {}).text || '').toLowerCase()}</span>`;
   }
 
   function selectPerson(id) {
@@ -407,7 +439,7 @@
         const t = A.RELATION_TYPES[r.type] || { label: r.type };
         const dir = t.directed ? (r.source === p.id ? '→' : '←') : '↔';
         const s = A.sentimentOf(r);
-        return `<li class="${s < 0 ? 'neg-text' : ''}">${dir} ${personLink(other)} <span class="muted small">${esc(t.label.split(' (')[0])} · força ${esc(r.strength)} · sent. ${s > 0 ? '+' : ''}${s}</span>
+        return `<li class="${s < 0 ? 'neg-text' : ''}">${dir} ${personLink(other)} <span class="muted small">${esc(t.label.split(' (')[0])} · ${esc((STRENGTH_TEXT[r.strength] || '').toLowerCase())} · ${esc(SENTIMENT_TEXT[s] || '')}</span>
           <button class="link small" data-action="edit-rel" data-id="${esc(r.id)}">editar</button></li>`;
       })
       .join('');
@@ -416,31 +448,30 @@
       <button class="close" data-action="close-detail" aria-label="Fechar">×</button>
       <h3>${esc(p.name)}</h3>
       <p class="muted">${esc(p.role || '')} · ${esc(depName(p.departmentId))} · ${esc(A.LEVELS[p.level] || '')}</p>
-      <p>${stanceBadge(m)} ${m.articulation ? '<span class="badge warn">ponto único de conexão</span>' : ''}</p>
+      <p>${stanceBadge(m)} ${m.articulation ? '<span class="badge warn">única ligação entre partes da equipe</span>' : ''}</p>
       <table class="mini">
-        <tr><td>Notas</td><td>desempenho ${m.performance ?? '—'} · engajamento ${m.engagement ?? '—'} · conhecimento ${m.knowledge}</td></tr>
-        <tr><td>Influência</td><td>${bar(m.influence)} ${fx(m.influence)} <span class="muted">(#${m.influenceRank})</span></td></tr>
-        <tr><td>Peso geral</td><td>${bar(m.peso)} ${fx(m.peso)}</td></tr>
-        <tr><td>Intermediação</td><td>${fx(m.betweenness, 3)}</td></tr>
-        <tr><td>Proximidade</td><td>${fx(m.closeness)}</td></tr>
-        <tr><td>Laços positivos</td><td>${m.ties} (força ${fx(m.strength, 0)})</td></tr>
-        <tr><td>Conflitos</td><td>${fx(m.negStrength, 1)}</td></tr>
-        <tr><td>Risco de conhecimento</td><td>${bar(m.knowledgeRisk, 'warn')} ${fx(m.knowledgeRisk)}</td></tr>
-        <tr><td>Tríades em tensão</td><td>${m.tension || 0}</td></tr>
-        <tr><td>Cluster</td><td>${m.community + 1}</td></tr>
-        ${m.exposure !== undefined ? `<tr><td>Exposição (vizinhança)</td><td>${fx(m.exposure, 1)}</td></tr>` : ''}
-        ${inc ? `<tr><td>Ocorrências</td><td>${inc.negative} negativas · ${inc.positive} positivas</td></tr>` : ''}
+        <tr><td>Desempenho</td><td>${m.performance ? m.performance + ' de 5' : 'não avaliado'}</td></tr>
+        <tr><td>Engajamento</td><td>${m.engagement ? m.engagement + ' de 5' : 'não avaliado'}</td></tr>
+        <tr><td>Influência ${help('O quanto os colegas ouvem e seguem essa pessoa, pelas relações cadastradas.')}</td><td>${meter(m.influence)} <span class="muted">(${m.influenceRank}ª da empresa)</span></td></tr>
+        <tr><td>Importância geral ${help('Junta influência, conhecimento que só ela tem e o cargo.')}</td><td>${meter(m.peso)}</td></tr>
+        <tr><td>Faz ponte entre pessoas ${help('O quanto a comunicação entre colegas passa por essa pessoa.')}</td><td>${meter(Math.min(1, m.betweenness * 4))}</td></tr>
+        <tr><td>Relações boas</td><td>${m.ties} pessoa(s)</td></tr>
+        <tr><td>Conflitos</td><td>${m.negStrength ? 'sim' : 'nenhum'}</td></tr>
+        <tr><td>Difícil de substituir ${help('Considera a nota de conhecimento e os conhecimentos que só ela tem.')}</td><td>${meter(m.knowledgeRisk, 'warn')}</td></tr>
+        ${m.tension ? `<tr><td>No meio de conflitos ${help('Tem boa relação com duas pessoas que brigam entre si.')}</td><td>${m.tension} situação(ões)</td></tr>` : ''}
+        <tr><td>Turma informal ${help('Grupo de pessoas que convivem mais entre si, descoberto pelo sistema.')}</td><td>Turma ${m.community + 1}</td></tr>
+        ${inc ? `<tr><td>Ocorrências</td><td>${inc.negative} de boicote/atrito · ${inc.positive} de apoio</td></tr>` : ''}
       </table>
-      ${m.uniqueSkills.length ? `<p class="small"><strong>Conhecimento exclusivo:</strong> ${m.uniqueSkills.map(esc).join(', ')}</p>` : ''}
-      <p class="small"><strong>Gestor:</strong> ${p.managerId ? personLink(p.managerId) : '—'}
-      ${sub.length ? `<br><strong>Liderados:</strong> ${sub.map((x) => personLink(x.id)).join(', ')}` : ''}</p>
+      ${m.uniqueSkills.length ? `<p class="small"><strong>Só esta pessoa sabe:</strong> ${m.uniqueSkills.map(esc).join(', ')}</p>` : ''}
+      <p class="small"><strong>Chefe direto:</strong> ${p.managerId ? personLink(p.managerId) : '—'}
+      ${sub.length ? `<br><strong>Equipe:</strong> ${sub.map((x) => personLink(x.id)).join(', ')}` : ''}</p>
       <h4>Relações (${rels.length})</h4>
       <ul class="rel-list">${relRows || '<li class="muted">Nenhuma relação cadastrada.</li>'}</ul>
       <div class="btn-row">
         <button data-action="edit-person" data-id="${esc(p.id)}">Abrir ficha</button>
         <button data-action="new-rel-from" data-id="${esc(p.id)}">+ Relação</button>
-        <button data-action="simulate-person" data-id="${esc(p.id)}">Simular saída</button>
-        ${model.focalId !== p.id ? `<button data-action="set-focal" data-id="${esc(p.id)}">Definir como focal</button>` : ''}
+        <button data-action="simulate-person" data-id="${esc(p.id)}">E se sair?</button>
+        ${model.focalId !== p.id ? `<button data-action="set-focal" data-id="${esc(p.id)}">Marcar como gerente</button>` : ''}
       </div>`;
   }
 
@@ -451,10 +482,17 @@
   let peopleTableMode = false;
 
   const RATINGS = [
-    { field: 'performance', label: 'Desempenho', values: [1, 2, 3, 4, 5], low: 'abaixo do esperado', high: 'excepcional' },
-    { field: 'knowledge', label: 'Conhecimento crítico', values: [0, 1, 2, 3, 4, 5], low: 'fácil de substituir', high: 'insubstituível' },
-    { field: 'engagement', label: 'Engajamento', values: [1, 2, 3, 4, 5], low: 'desmotivado(a)', high: 'muito engajado(a)' },
-    { field: 'stance', label: 'Posição em relação ao gerente', values: [-2, -1, 0, 1, 2], low: 'resiste / boicota', high: 'apoia ativamente', signed: true },
+    { field: 'performance', label: 'Desempenho', help: 'Entrega resultados? 1 = bem abaixo do esperado, 5 = excelente.', values: [1, 2, 3, 4, 5], low: 'fraco', high: 'excelente' },
+    { field: 'knowledge', label: 'Difícil de substituir?', help: 'Quanto tempo e esforço levaria para outra pessoa fazer o que ela faz.', values: [0, 1, 2, 3, 4, 5], low: 'fácil', high: 'muito difícil' },
+    { field: 'engagement', label: 'Engajamento', help: 'Veste a camisa? 1 = desmotivado(a), 5 = muito engajado(a).', values: [1, 2, 3, 4, 5], low: 'desmotivado', high: 'engajado' },
+    {
+      field: 'stance',
+      label: 'Postura com o gerente',
+      help: 'Como essa pessoa age em relação ao novo gerente. Se não souber, deixe "?" e o sistema estima pelas relações.',
+      values: [-2, -1, 0, 1, 2],
+      words: { '-2': 'Resiste', '-1': 'Tende a resistir', 0: 'Neutro', 1: 'Tende a apoiar', 2: 'Apoia' },
+      signed: true,
+    },
   ];
 
   const filledGrades = (p) => RATINGS.filter((r) => p[r.field] !== null && p[r.field] !== undefined && p[r.field] !== '').length;
@@ -488,7 +526,7 @@
                 const l = linksOf(p.id).length;
                 return `<button class="cad-item${p.id === fichaId ? ' active' : ''}" data-action="open-ficha" data-id="${esc(p.id)}">
                   <span class="cad-name">${esc(p.name || '(sem nome)')}</span>
-                  <span class="cad-meta"><span class="dots" title="${g} de 4 notas preenchidas">${'●'.repeat(g)}${'○'.repeat(4 - g)}</span> ${l} vínculo${l === 1 ? '' : 's'}</span>
+                  <span class="cad-meta"><span class="dots" title="${g} de 4 notas preenchidas">${'●'.repeat(g)}${'○'.repeat(4 - g)}</span> ${l} relaç${l === 1 ? 'ão' : 'ões'} · ${(p.skills || []).length} conhec.</span>
                 </button>`;
               })
               .join('')}</div>`
@@ -501,17 +539,17 @@
     const cur = p[r.field];
     const isSet = cur !== null && cur !== undefined && cur !== '';
     const btn = (v) => {
-      const label = r.signed && v > 0 ? '+' + v : String(v);
+      const label = r.words ? r.words[v] : String(v);
       const tone = r.signed ? (v < 0 ? ' neg' : v > 0 ? ' pos' : '') : '';
       return `<button type="button" class="rate-btn${tone}${isSet && Number(cur) === v ? ' active' : ''}" data-action="rate" data-field="${r.field}" data-value="${v}" aria-pressed="${isSet && Number(cur) === v}">${label}</button>`;
     };
-    return `<div class="rating">
-      <div class="rating-label">${esc(r.label)}</div>
+    return `<div class="rating${r.words ? ' words' : ''}">
+      <div class="rating-label">${esc(r.label)} ${help(r.help)}</div>
       <div class="rating-scale">
-        <span class="rating-end">${esc(r.low)}</span>
+        ${r.words ? '' : `<span class="rating-end">${esc(r.low)}</span>`}
         ${r.values.map(btn).join('')}
-        <span class="rating-end">${esc(r.high)}</span>
-        <button type="button" class="rate-btn clear${isSet ? '' : ' active'}" data-action="rate" data-field="${r.field}" data-value="" title="Não avaliado">?</button>
+        ${r.words ? '' : `<span class="rating-end">${esc(r.high)}</span>`}
+        <button type="button" class="rate-btn clear${isSet ? '' : ' active'}" data-action="rate" data-field="${r.field}" data-value="" title="Ainda não sei / não avaliado">?</button>
       </div>
     </div>`;
   }
@@ -530,13 +568,14 @@
       box.innerHTML = `<div class="card guide">
         <h3>Como cadastrar</h3>
         <ol>
-          <li><strong>Setores</strong>: crie pelo campo "Setor" da ficha (opção "+ Novo setor…") ou na aba Setores e grupos.</li>
+          <li><strong>Lista de conhecimentos</strong>: na aba <em>Conhecimentos</em>, monte a lista do que é importante saber na empresa (há uma lista sugerida pronta).</li>
           <li><strong>Colaboradores</strong>: clique em <em>+ Novo colaborador</em> ou cole uma lista de nomes à esquerda.</li>
-          <li><strong>Notas</strong>: clique nos números (desempenho, conhecimento, engajamento e posição em relação ao gerente).</li>
-          <li><strong>Vínculos</strong>: digite o nome de quem se relaciona com a pessoa, escolha o tipo e a força.</li>
+          <li><strong>Notas</strong>: clique nas opções de desempenho, dificuldade de substituir, engajamento e postura com o gerente.</li>
+          <li><strong>Conhecimentos</strong>: marque na lista o que a pessoa sabe fazer.</li>
+          <li><strong>Relações</strong>: digite o nome de quem convive com a pessoa, diga o tipo de relação, a frequência e o clima.</li>
           <li>Abra o <strong>Painel</strong> para ver as recomendações.</li>
         </ol>
-        <p class="muted small">Tudo é salvo automaticamente. A bolinha ●○ na lista mostra quantas notas já foram dadas.</p>
+        <p class="muted small">Tudo é salvo automaticamente. As bolinhas ●○ na lista mostram quantas notas já foram dadas.</p>
         ${data().people.length ? '' : '<p><button data-action="load-sample">Ver com exemplo fictício</button></p>'}
       </div>`;
       return;
@@ -557,8 +596,8 @@
           <td><a href="#" data-action="open-ficha" data-id="${esc(other)}">${esc(pname(other))}</a><div class="muted small">${esc(depName((person(other) || {}).departmentId))}</div></td>
           <td><select data-rel="${esc(r.id)}" data-relfield="type">${typeOptions(r.type)}</select>
             ${t.directed ? `<div class="small muted">${dir} <button class="link small" data-action="rel-flip" data-id="${esc(r.id)}">inverter</button></div>` : ''}</td>
-          <td><select data-rel="${esc(r.id)}" data-relfield="strength">${options([1, 2, 3, 4, 5].map((v) => [v, v]), r.strength)}</select></td>
-          <td><select data-rel="${esc(r.id)}" data-relfield="sentiment">${options([['', 'padrão (' + (A.RELATION_TYPES[r.type] || {}).sentiment + ')'], ...sentOpts], r.sentiment ?? '')}</select></td>
+          <td><select data-rel="${esc(r.id)}" data-relfield="strength">${options(STRENGTH_OPTIONS, r.strength)}</select></td>
+          <td><select data-rel="${esc(r.id)}" data-relfield="sentiment">${options([['', 'Normal para o tipo'], ...sentOpts], r.sentiment ?? '')}</select></td>
           <td><button class="link danger-text" data-action="rel-del" data-id="${esc(r.id)}" aria-label="Remover vínculo">remover</button></td>
         </tr>`;
       })
@@ -569,19 +608,18 @@
         <input class="ficha-name" data-field="name" value="${esc(p.name)}" placeholder="Nome do colaborador" aria-label="Nome">
         <div class="ficha-badges">
           ${m ? stanceBadge(m) : ''}
-          ${m ? `<span class="badge" title="Posição no ranking de influência">influência #${m.influenceRank}</span>` : ''}
-          ${p.id === model.focalId ? '<span class="badge st-focal">pessoa focal</span>' : ''}
+          ${m ? `<span class="badge" title="Posição entre as pessoas mais ouvidas da empresa">${m.influenceRank}ª mais influente</span>` : ''}
         </div>
       </div>
 
       <div class="grid3">
         <label>Cargo<input data-field="role" value="${esc(p.role)}" placeholder="ex.: Supervisor de produção"></label>
         <label>Setor<select data-field="departmentId">${depOptions(p.departmentId)}<option value="__new">+ Novo setor…</option></select></label>
-        <label>Nível<select data-field="level">${options(Object.entries(A.LEVELS), p.level)}</select></label>
-        <label>Gestor direto<select data-field="managerId"><option value="">—</option>${options(others.slice().sort((a, b) => a.name.localeCompare(b.name)).map((x) => [x.id, x.name]), p.managerId)}</select></label>
+        <label>Nível do cargo<select data-field="level">${options(Object.entries(A.LEVELS), p.level)}</select></label>
+        <label>Chefe direto<select data-field="managerId"><option value="">—</option>${options(others.slice().sort((a, b) => a.name.localeCompare(b.name)).map((x) => [x.id, x.name]), p.managerId)}</select></label>
         <label>Tempo de casa (anos)<input data-field="tenure" type="number" min="0" step="0.5" value="${esc(p.tenure ?? '')}"></label>
         <div class="field">
-          <span class="field-label">Grupos / equipes</span>
+          <span class="field-label">Grupos / equipes ${help('Turnos, projetos ou comitês de que a pessoa participa, além do setor.')}</span>
           <div class="chips">${chips(p.groups, 'groups')}<input id="group-input" list="groups-datalist" placeholder="digite e Enter" aria-label="Adicionar grupo"></div>
           <datalist id="groups-datalist">${allGroups().map((g) => `<option value="${esc(g)}">`).join('')}</datalist>
         </div>
@@ -589,22 +627,21 @@
 
       <h4>Notas</h4>
       <div class="ratings">${RATINGS.map((r) => ratingRow(p, r)).join('')}</div>
-      <p class="muted small">"?" = ainda não avaliado. Sem a posição informada, o sistema estima pela rede de relações.</p>
+      <p class="muted small">"?" = ainda não sei. Se a postura ficar em "?", o sistema estima pelas relações da pessoa.</p>
 
-      <h4>Conhecimentos / habilidades</h4>
-      <div class="chips">${chips(p.skills, 'skills')}<input id="skill-input" list="skills-datalist" placeholder="ex.: ERP, carteira sul — Enter" aria-label="Adicionar habilidade"></div>
-      <datalist id="skills-datalist">${[...new Set(data().people.flatMap((x) => x.skills || []))].map((s) => `<option value="${esc(s)}">`).join('')}</datalist>
+      <h4>O que sabe fazer ${help('Marque os conhecimentos da lista. "Só ele(a) sabe" indica um risco: se a pessoa sair, ninguém mais sabe fazer.')}</h4>
+      ${knowledgeChecklist(p)}
 
-      <h4>Vínculos (${links.length})</h4>
+      <h4>Relações (${links.length}) ${help('Com quem essa pessoa convive no trabalho, com que frequência e se o clima é bom ou ruim.')}</h4>
       <div class="link-add">
         <input id="link-person" list="people-datalist" placeholder="Com quem? (nome)" aria-label="Pessoa">
         <datalist id="people-datalist">${others.map((x) => `<option value="${esc(x.name)}">${esc(depName(x.departmentId))}</option>`).join('')}</datalist>
-        <select id="link-type" aria-label="Tipo">${typeOptions(fichaLinkDefaults.type)}</select>
-        <select id="link-strength" aria-label="Força" title="Força / frequência">${options([1, 2, 3, 4, 5].map((v) => [v, 'força ' + v]), fichaLinkDefaults.strength)}</select>
-        <select id="link-sent" aria-label="Sentimento">${options(SENTIMENT_OPTIONS, fichaLinkDefaults.sentiment)}</select>
-        <button class="primary" data-action="link-add">Adicionar vínculo</button>
+        <select id="link-type" aria-label="Tipo de relação">${typeOptions(fichaLinkDefaults.type)}</select>
+        <select id="link-strength" aria-label="Frequência do contato" title="Com que frequência convivem">${options(STRENGTH_OPTIONS, fichaLinkDefaults.strength)}</select>
+        <select id="link-sent" aria-label="Clima da relação">${options(SENTIMENT_OPTIONS, fichaLinkDefaults.sentiment)}</select>
+        <button class="primary" data-action="link-add">Adicionar relação</button>
       </div>
-      ${links.length ? `<div class="table-wrap"><table class="links"><thead><tr><th>Pessoa</th><th>Tipo</th><th>Força</th><th>Sentimento</th><th></th></tr></thead><tbody>${linkRows}</tbody></table></div>` : '<p class="muted small">Nenhum vínculo ainda. Digite um nome acima — se a pessoa não existir, ela é criada.</p>'}
+      ${links.length ? `<div class="table-wrap"><table class="links"><thead><tr><th>Pessoa</th><th>Tipo de relação</th><th>Frequência</th><th>Clima</th><th></th></tr></thead><tbody>${linkRows}</tbody></table></div>` : '<p class="muted small">Nenhuma relação ainda. Digite um nome acima — se a pessoa não existir, ela é criada.</p>'}
 
       <label>Observações<textarea data-field="notes" rows="2">${esc(p.notes)}</textarea></label>
 
@@ -682,7 +719,7 @@
     const dup = data().relations.find(
       (r) => r.type === fichaLinkDefaults.type && ((r.source === fichaId && r.target === other.id) || (!(A.RELATION_TYPES[r.type] || {}).directed && r.source === other.id && r.target === fichaId))
     );
-    if (dup) return toast('Esse vínculo já existe — ajuste-o na lista.');
+    if (dup) return toast('Essa relação já existe — ajuste-a na lista abaixo.');
     S.upsert(
       'relations',
       {
@@ -699,7 +736,7 @@
     afterSilentEdit(true);
     const inp = $('#link-person');
     if (inp) inp.focus();
-    toast(`Vínculo com ${other.name} adicionado.`);
+    toast(`Relação com ${other.name} adicionada.`);
   }
 
   function addChip(kind, value) {
@@ -709,8 +746,82 @@
     const list = (p[kind] || []).slice();
     if (!list.some((x) => x.toLowerCase() === v.toLowerCase())) list.push(v);
     updatePerson({ [kind]: list }, true);
-    const inp = $(kind === 'groups' ? '#group-input' : '#skill-input');
+    const inp = $('#group-input');
     if (inp) inp.focus();
+  }
+
+  // ---------------------------------------------- conhecimentos (checklist)
+  let knFilter = '';
+  const knowledge = () => data().knowledge || [];
+  const knHolders = (id) => data().people.filter((x) => (x.skills || []).includes(id));
+  const IMPORTANCE_TEXT = Object.fromEntries(IMPORTANCE_OPTIONS);
+  const knCategories = () =>
+    [...new Set([...knowledge().map((k) => k.category || 'Outros'), ...Object.keys(window.KNOWLEDGE_SUGGESTIONS || {}), 'Outros'])].sort((a, b) => a.localeCompare(b));
+  const byCategory = (list) => {
+    const map = new Map();
+    for (const k of list.slice().sort((a, b) => (b.importance || 2) - (a.importance || 2) || a.name.localeCompare(b.name))) {
+      const c = k.category || 'Outros';
+      if (!map.has(c)) map.set(c, []);
+      map.get(c).push(k);
+    }
+    return [...map.entries()].sort((a, b) => a[0].localeCompare(b[0]));
+  };
+
+  function knowledgeChecklist(p) {
+    const list = knowledge();
+    if (!list.length) {
+      return `<div class="kn-empty">A lista de conhecimentos ainda está vazia.
+        <button class="primary" data-action="kn-suggest">Usar a lista sugerida</button>
+        <button data-action="goto" data-id="conhecimentos">Montar minha lista</button></div>`;
+    }
+    const mine = new Set(p.skills || []);
+    const groups = byCategory(list)
+      .map(
+        ([cat, items]) => `<fieldset class="kn-cat"><legend>${esc(cat)}</legend>${items
+          .map((k) => {
+            const n = knHolders(k.id).length;
+            const has = mine.has(k.id);
+            const flag = has && n === 1 ? '<span class="kn-flag only">só ele(a) sabe</span>' : n && !has ? `<span class="kn-flag">${n} sabe${n > 1 ? 'm' : ''}</span>` : has && n > 1 ? `<span class="kn-flag">+${n - 1}</span>` : '';
+            const hidden = knFilter && !k.name.toLowerCase().includes(knFilter) ? ' hidden' : '';
+            return `<label class="kn-item imp-${k.importance || 2}"${hidden}><input type="checkbox" data-kn="${esc(k.id)}"${has ? ' checked' : ''}>
+              <span class="kn-name">${esc(k.name)}</span>${k.importance === 3 ? '<span class="kn-ess" title="Conhecimento essencial">essencial</span>' : ''}${flag}</label>`;
+          })
+          .join('')}</fieldset>`
+      )
+      .join('');
+    return `<div class="kn-box">
+      <div class="kn-tools">
+        <input id="kn-filter" type="search" placeholder="Procurar conhecimento…" value="${esc(knFilter)}" aria-label="Procurar conhecimento">
+        <span class="muted small">${mine.size} marcado(s) de ${list.length}</span>
+      </div>
+      <div class="kn-grid">${groups}</div>
+      <div class="kn-add">
+        <input id="kn-new-name" placeholder="Não está na lista? Digite o conhecimento…" aria-label="Novo conhecimento">
+        <select id="kn-new-cat" aria-label="Categoria">${options(knCategories().map((c) => [c, c]), 'Outros')}</select>
+        <button data-action="kn-add-ficha">Incluir na lista e marcar</button>
+      </div>
+    </div>`;
+  }
+
+  function addKnowledge(name, category, importance) {
+    const n = name.trim();
+    if (!n) return null;
+    const found = knowledge().find((k) => k.name.trim().toLowerCase() === n.toLowerCase());
+    if (found) return found;
+    return S.upsert('knowledge', { name: n, category: category || 'Outros', importance: Number(importance) || 2 }, 'k', { silent: true });
+  }
+
+  function addSuggestedKnowledge() {
+    let added = 0;
+    for (const [cat, names] of Object.entries(window.KNOWLEDGE_SUGGESTIONS || {})) {
+      for (const n of names) {
+        if (!knowledge().some((k) => k.name.toLowerCase() === n.toLowerCase())) {
+          addKnowledge(n, cat, 2);
+          added++;
+        }
+      }
+    }
+    return added;
   }
 
   function pasteList(text) {
@@ -763,30 +874,89 @@
       { key: 'role', label: 'Cargo', sort: (r) => r.p.role || '', render: (r) => esc(r.p.role) },
       { key: 'dep', label: 'Setor', sort: (r) => depName(r.p.departmentId), render: (r) => esc(depName(r.p.departmentId)) },
       { key: 'groups', label: 'Grupos', sort: (r) => (r.p.groups || []).join(), render: (r) => esc((r.p.groups || []).join(', ')) },
-      { key: 'performance', label: 'Desemp.', sort: (r) => Number(r.p.performance) || 0, render: (r) => grade(r.p.performance) },
-      { key: 'knowledge', label: 'Conhec.', sort: (r) => Number(r.p.knowledge) || 0, render: (r) => grade(r.p.knowledge) },
-      { key: 'engagement', label: 'Engaj.', sort: (r) => Number(r.p.engagement) || 0, render: (r) => grade(r.p.engagement) },
-      { key: 'stance', label: 'Posição', sort: (r) => r.m.stance ?? -9, render: (r) => stanceBadge(r.m) },
-      { key: 'links', label: 'Vínculos', sort: (r) => linksOf(r.p.id).length, render: (r) => linksOf(r.p.id).length },
-      { key: 'influence', label: 'Influência', sort: (r) => r.m.influence, render: (r) => `${bar(r.m.influence)} ${fx(r.m.influence)}` },
-      { key: 'peso', label: 'Peso', sort: (r) => r.m.peso, render: (r) => `${bar(r.m.peso)} ${fx(r.m.peso)}` },
+      { key: 'performance', label: 'Desempenho', sort: (r) => Number(r.p.performance) || 0, render: (r) => grade(r.p.performance) },
+      { key: 'knowledge', label: 'Difícil substituir', sort: (r) => Number(r.p.knowledge) || 0, render: (r) => grade(r.p.knowledge) },
+      { key: 'engagement', label: 'Engajamento', sort: (r) => Number(r.p.engagement) || 0, render: (r) => grade(r.p.engagement) },
+      { key: 'skills', label: 'Conhecimentos', sort: (r) => (r.p.skills || []).length, render: (r) => (r.p.skills || []).length },
+      { key: 'stance', label: 'Postura', sort: (r) => r.m.stance ?? -9, render: (r) => stanceBadge(r.m, false) },
+      { key: 'links', label: 'Relações', sort: (r) => linksOf(r.p.id).length, render: (r) => linksOf(r.p.id).length },
+      { key: 'influence', label: 'Influência', sort: (r) => r.m.influence, render: (r) => meter(r.m.influence) },
+      { key: 'peso', label: 'Importância geral', sort: (r) => r.m.peso, render: (r) => meter(r.m.peso) },
     ];
     $('#people-table').innerHTML = data().people.length
       ? table('people', cols, rows, { key: 'peso', dir: 'desc' })
       : emptyState('Nenhum colaborador cadastrado.');
   }
 
+  // ------------------------------------------------------- CONHECIMENTOS
+  function renderConhecimentos() {
+    const box = $('#knowledge-panel');
+    const list = knowledge();
+    const counts = new Map(list.map((k) => [k.id, knHolders(k.id)]));
+    const nobody = list.filter((k) => counts.get(k.id).length === 0).length;
+    const onlyOne = list.filter((k) => counts.get(k.id).length === 1).length;
+    const essRisk = list.filter((k) => k.importance === 3 && counts.get(k.id).length <= 1).length;
+    const coverage = (n) =>
+      n === 0 ? '<span class="cov cov-0">ninguém sabe</span>' : n === 1 ? '<span class="cov cov-1">só 1 pessoa</span>' : n === 2 ? '<span class="cov cov-2">2 pessoas</span>' : `<span class="cov cov-3">${n} pessoas</span>`;
+    const rows = byCategory(list)
+      .map(
+        ([cat, items]) => `<tbody><tr class="kn-cat-row"><th colspan="5">${esc(cat)} <span class="muted">(${items.length})</span></th></tr>${items
+          .map((k) => {
+            const hs = counts.get(k.id);
+            return `<tr>
+              <td><input class="kn-edit" data-kid="${esc(k.id)}" data-kfield="name" value="${esc(k.name)}" aria-label="Nome do conhecimento"></td>
+              <td><select data-kid="${esc(k.id)}" data-kfield="importance" aria-label="Importância">${options(IMPORTANCE_OPTIONS, k.importance || 2)}</select></td>
+              <td>${coverage(hs.length)}</td>
+              <td class="small">${hs.map((p) => `<a href="#" data-action="open-ficha" data-id="${esc(p.id)}">${esc(p.name)}</a>`).join(', ') || '<span class="muted">—</span>'}</td>
+              <td><select data-kid="${esc(k.id)}" data-kfield="category" aria-label="Categoria">${options(knCategories().map((c) => [c, c]), k.category || 'Outros')}</select>
+                <button class="link danger-text" data-action="kn-del" data-id="${esc(k.id)}">excluir</button></td>
+            </tr>`;
+          })
+          .join('')}</tbody>`
+      )
+      .join('');
+    box.innerHTML = `
+      <div class="card">
+        <h3>Montar a lista</h3>
+        <p class="muted small">Cadastre aqui o que é importante saber na empresa (sistemas, clientes, processos, máquinas…). Depois, na ficha de cada colaborador, basta marcar o que ele sabe.</p>
+        <div class="kn-new">
+          <input id="kn-cat-name" placeholder="Nome do conhecimento (ex.: Operar a injetora 2)" aria-label="Nome do conhecimento">
+          <select id="kn-cat-category" aria-label="Categoria">${options(knCategories().map((c) => [c, c]), 'Outros')}</select>
+          <select id="kn-cat-importance" aria-label="Importância">${options(IMPORTANCE_OPTIONS, 2)}</select>
+          <button class="primary" data-action="kn-add">Adicionar</button>
+        </div>
+        <div class="btn-row">
+          <button data-action="kn-suggest">${list.length ? 'Completar com a lista sugerida' : 'Usar a lista sugerida (pronta para começar)'}</button>
+          <button data-action="kn-newcat">+ Nova categoria</button>
+        </div>
+        <p class="muted small"><strong>Importância:</strong> <em>Essencial</em> = sem isso a empresa para ou perde dinheiro; <em>Importante</em> = faz falta, mas dá para contornar; <em>Desejável</em> = ajuda, mas não é crítico.</p>
+      </div>
+      ${
+        list.length
+          ? `<div class="kpis">
+              ${kpi('Conhecimentos na lista', list.length)}
+              ${kpi('Só 1 pessoa sabe', onlyOne, 'se ela sair, a empresa perde')}
+              ${kpi('Ninguém marcou', nobody, 'ou ninguém sabe, ou falta marcar nas fichas')}
+              ${kpi('Essenciais em risco', essRisk, 'essenciais com 1 pessoa ou nenhuma')}
+            </div>
+            <div class="card"><h3>Quem sabe o quê</h3>
+              <div class="table-wrap"><table class="kn-table"><thead><tr><th>Conhecimento</th><th>Importância</th><th>Quantos sabem</th><th>Quem sabe</th><th>Categoria</th></tr></thead>${rows}</table></div>
+            </div>`
+          : ''
+      }`;
+  }
+
   // --------------------------------------------------------------- PAINEL
   let board = null;
   const BOARD_ORDER = ['cuidado', 'trazer', 'influente', 'reter', 'cortar', 'aliado'];
   const TONE_LABEL = {
-    critico: 'Risco crítico',
-    cuidado: 'Cuidado',
-    cortar: 'Pode cortar',
-    trazer: 'Trazer para o lado',
-    reter: 'Reter',
+    critico: 'Risco alto',
+    cuidado: 'Atenção',
+    cortar: 'Dá para cortar',
+    trazer: 'Conquistar',
+    reter: 'Não perder',
     aliado: 'Aliado',
-    normal: 'Acompanhar',
+    normal: 'Sem alerta',
   };
 
   function getBoard() {
@@ -800,7 +970,7 @@
   function renderPainel() {
     const box = $('#painel');
     if (data().people.length < 3) {
-      box.innerHTML = emptyState('Cadastre ao menos 3 colaboradores com vínculos para ver o painel de decisão.');
+      box.innerHTML = emptyState('Cadastre ao menos 3 colaboradores com suas relações para ver o painel.');
       return;
     }
     if (!board && !ranking && data().people.length > 150) {
@@ -811,14 +981,15 @@
     const b = getBoard();
     const focalNote = model.focalId
       ? ''
-      : '<p class="notice-inline">Defina a <strong>pessoa focal</strong> (o gerente geral) para calcular quem resiste, quem apoia e com quem ter cuidado.</p>';
+      : '<p class="notice-inline">Escolha ao lado <strong>quem é o gerente</strong>. Sem isso, o sistema não sabe quem apoia e quem resiste.</p>';
 
     const item = (cat, p) => {
       const reasons = p.reasons[cat];
       const pp = person(p.id);
       return `<li>
         <div class="row-top">${personLink(p.id)} <span class="muted small">${esc(pp.role || '')}${pp.role ? ' · ' : ''}${esc(depName(pp.departmentId))}</span></div>
-        <div class="small">${esc(reasons[0])}${reasons.length > 1 ? ` <span class="more" title="${esc(reasons.slice(1).join(' · '))}">+${reasons.length - 1}</span>` : ''}</div>
+        <div class="small">${esc(reasons[0])}</div>
+        ${reasons.length > 1 ? `<details class="more"><summary>mais ${reasons.length - 1} motivo${reasons.length > 2 ? 's' : ''}</summary><ul>${reasons.slice(1).map((x) => `<li>${esc(x)}</li>`).join('')}</ul></details>` : ''}
       </li>`;
     };
     const cards = BOARD_ORDER.map((cat) => {
@@ -826,8 +997,8 @@
       const list = b.lists[cat];
       let extra = '';
       if (cat === 'cortar') {
-        if (b.missingPerformance) extra += `<p class="small warn-text">${b.missingPerformance} pessoa(s) sem nota de desempenho — avalie na ficha para esta análise ficar confiável.</p>`;
-        if (b.lowImpactWithoutGrades.length) extra += `<p class="small muted">Baixo impacto de saída, mas sem notas: ${b.lowImpactWithoutGrades.map(personLink).join(', ')}</p>`;
+        if (b.missingPerformance) extra += `<p class="small warn-text">${b.missingPerformance} pessoa(s) ainda sem nota de desempenho. Dê as notas na ficha para este quadro ficar confiável.</p>`;
+        if (b.lowImpactWithoutGrades.length) extra += `<p class="small muted">A saída teria pouco impacto, mas faltam notas: ${b.lowImpactWithoutGrades.map(personLink).join(', ')}</p>`;
       }
       return `<section class="board-card cat-${cat}">
         <header><h3>${esc(info.label)} <span class="count">${list.length}</span></h3><p class="muted small">${esc(info.hint)}</p></header>
@@ -841,12 +1012,12 @@
       [
         { key: 'name', label: 'Pessoa', sort: (r) => pname(r.id), render: (r) => personLink(r.id) },
         { key: 'dep', label: 'Setor', sort: (r) => depName(person(r.id).departmentId), render: (r) => esc(depName(person(r.id).departmentId)) },
-        { key: 'tone', label: 'Classificação', sort: (r) => BOARD_TONES.indexOf(r.tone), render: (r) => `<span class="tone tone-${r.tone}">${esc(TONE_LABEL[r.tone])}</span>` },
+        { key: 'tone', label: 'Situação', sort: (r) => BOARD_TONES.indexOf(r.tone), render: (r) => `<span class="tone tone-${r.tone}">${esc(TONE_LABEL[r.tone])}</span>` },
         { key: 'action', label: 'O que fazer', nosort: true, render: (r) => `<span class="small">${esc(r.action)}</span>` },
-        { key: 'influence', label: 'Influência', render: (r) => `${bar(r.influence)} ${fx(r.influence)}` },
-        { key: 'exitCost', label: 'Custo de saída', render: (r) => `${bar(r.exitCost / 100, 'warn')} ${Math.round(r.exitCost)}` },
-        { key: 'performance', label: 'Desemp.', sort: (r) => r.performance ?? -1, render: (r) => (r.performance ?? '—') },
-        { key: 'stance', label: 'Posição', sort: (r) => r.stance ?? -9, render: (r) => stanceBadge(model.byId.get(r.id)) },
+        { key: 'influence', label: 'Influência', render: (r) => meter(r.influence) },
+        { key: 'exitCost', label: 'Impacto se sair', render: (r) => `<span class="nowrap">${bar(r.exitCost / 100, 'warn')} ${Math.round(r.exitCost)} de 100</span>` },
+        { key: 'performance', label: 'Desempenho', sort: (r) => r.performance ?? -1, render: (r) => (r.performance ? r.performance + ' de 5' : '—') },
+        { key: 'stance', label: 'Postura', sort: (r) => r.stance ?? -9, render: (r) => stanceBadge(model.byId.get(r.id)) },
       ],
       b.people,
       { key: 'tone', dir: 'asc' }
@@ -854,28 +1025,40 @@
 
     box.innerHTML = `
       <div class="card painel-top">
-        <label class="inline">Gerente / pessoa focal:
+        <label class="inline">Quem é o gerente?
           <select id="focal-select">${peopleOptions(model.focalId, 'Selecione…')}</select></label>
         ${focalNote}
       </div>
+      ${HOW_TO_READ}
       <div class="board">${cards}</div>
       <div class="card">
-        <h3>Matriz de decisão</h3>
-        <p class="muted small">Horizontal: quanto custa perder a pessoa (conhecimento, influência, conexões, contágio, desempenho). Vertical: posição em relação ao gerente. Tamanho: influência. Passe o mouse para detalhes; clique para ver no mapa.</p>
+        <h3>Mapa de decisão ${help('Cada bolinha é uma pessoa. Quanto mais à direita, maior o impacto se ela sair. Quanto mais para baixo, mais ela resiste ao gerente. Bolinhas grandes são pessoas muito ouvidas.')}</h3>
+        <p class="muted small">→ quanto mais à direita, mais a empresa sente se a pessoa sair. ↓ quanto mais para baixo, mais resiste ao gerente. Bolinha grande = pessoa muito ouvida. Passe o mouse para ver detalhes; clique para abrir no mapa.</p>
         ${matrixSvg(b)}
       </div>
       <div class="card">
-        <h3>Recomendação por pessoa</h3>
+        <h3>O que fazer com cada pessoa</h3>
         ${tableHtml}
       </div>
-      <p class="muted small">Recomendações são apoio à decisão, não veredito. Antes de qualquer desligamento: feedback documentado, plano de melhoria e orientação jurídica. Vínculo familiar nunca é motivo de demissão.</p>`;
+      <p class="muted small">As recomendações ajudam a decidir, mas não substituem a conversa e o bom senso. Antes de qualquer desligamento: retorno claro à pessoa, metas com prazo e orientação jurídica. Ser parente ou casado com alguém nunca é motivo de demissão.</p>`;
   }
   const BOARD_TONES = ['critico', 'cuidado', 'cortar', 'trazer', 'reter', 'aliado', 'normal'];
+
+  // Explicação em linguagem simples, mostrada no topo do painel.
+  const HOW_TO_READ = `<details class="card how-to" open>
+    <summary><strong>Como ler este painel</strong> <span class="muted small">(clique para esconder)</span></summary>
+    <div class="how-grid">
+      <div><strong>Influência</strong><p>O quanto os colegas ouvem e seguem a pessoa. Vem das relações cadastradas, não do cargo.</p></div>
+      <div><strong>Impacto se sair</strong><p>De 0 a 100: o quanto a empresa sentiria a saída. Considera o que só ela sabe, quantas pessoas dependem dela, se ela liga equipes e se colegas próximos podem sair junto.</p></div>
+      <div><strong>Postura com o gerente</strong><p>Apoia, neutro ou resiste. Vem da sua avaliação, das relações com o gerente ou das ocorrências registradas. Quando aparece "estimado pelo sistema", é um palpite: confirme antes de agir.</p></div>
+      <div><strong>Grupo de resistência</strong><p>Pessoas que resistem ao gerente e são próximas entre si. Juntas, elas têm mais força para atrapalhar.</p></div>
+    </div>
+  </details>`;
 
   function matrixSvg(b) {
     const W = 860;
     const H = 440;
-    const m = { l: 72, r: 24, t: 40, b: 66 };
+    const m = { l: 118, r: 24, t: 40, b: 66 };
     const maxCost = Math.max(40, ...b.people.map((p) => p.exitCost)) * 1.08;
     const X = (v) => m.l + (v / maxCost) * (W - m.l - m.r);
     // Margem de 0,3 acima e abaixo para os círculos nos extremos não serem cortados.
@@ -883,11 +1066,11 @@
     const cut = b.thresholds.hiCost;
     const xt = [0, 10, 20, 30, 40, 50, 60, 70, 80, 90, 100].filter((v) => v <= maxCost);
     const yt = [
-      [2, '+2 apoia'],
-      [1, '+1'],
-      [0, '0'],
-      [-1, '−1'],
-      [-2, '−2 resiste'],
+      [2, 'Apoia'],
+      [1, 'Tende a apoiar'],
+      [0, 'Neutro'],
+      [-1, 'Tende a resistir'],
+      [-2, 'Resiste'],
     ];
     const labelled = new Set(
       b.people
@@ -906,7 +1089,7 @@
         const r = 5 + 10 * p.influence;
         const first = pname(p.id).split(' ')[0];
         return `<g class="pt" data-action="select-person" data-id="${esc(p.id)}" data-tip="${esc(
-          `${pname(p.id)} · ${depName(person(p.id).departmentId)}\nCusto de saída ${Math.round(p.exitCost)}/100 · posição ${p.stance === null ? '?' : fx(p.stance, 1)} · influência ${fx(p.influence)}\n${p.action}`
+          `${pname(p.id)} · ${depName(person(p.id).departmentId)}\nImpacto se sair: ${Math.round(p.exitCost)} de 100 · Postura: ${stanceText(model.byId.get(p.id))} · Influência: ${nivel(p.influence).toLowerCase()}\n${p.action}`
         )}">
           <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${r.toFixed(1)}" class="dot-${p.stanceLabel}${p.stance === null ? ' hollow' : ''}"></circle>
           <circle cx="${cx.toFixed(1)}" cy="${cy.toFixed(1)}" r="${Math.max(r, 12).toFixed(1)}" class="hit"></circle>
@@ -915,28 +1098,27 @@
       })
       .join('');
     const legend = [
-      ['apoiador', 'apoiador'],
+      ['apoiador', 'apoia o gerente'],
       ['neutro', 'neutro'],
-      ['resistente', 'resistente'],
+      ['resistente', 'resiste ao gerente'],
     ]
       .map(([k, l]) => `<span><i class="lg-dot dot-${k}"></i>${l}</span>`)
       .join('');
     return `<div class="matrix-wrap">
-      <svg viewBox="0 0 ${W} ${H}" class="matrix" role="img" aria-label="Matriz: custo de saída por posição em relação ao gerente">
+      <svg viewBox="0 0 ${W} ${H}" class="matrix" role="img" aria-label="Mapa de decisão: impacto se a pessoa sair por postura com o gerente">
         <rect x="${X(cut)}" y="${Y(0)}" width="${X(maxCost) - X(cut)}" height="${Y(-2.3) - Y(0)}" class="zone-risk"></rect>
         ${xt.map((v) => `<line x1="${X(v)}" x2="${X(v)}" y1="${Y(2.3)}" y2="${H - m.b}" class="grid"></line><text x="${X(v)}" y="${H - m.b + 16}" class="tick" text-anchor="middle">${v}</text>`).join('')}
         ${yt.map(([v, l]) => `<line x1="${m.l}" x2="${W - m.r}" y1="${Y(v)}" y2="${Y(v)}" class="grid${v === 0 ? ' zero' : ''}"></line><text x="${m.l - 6}" y="${Y(v) + 4}" class="tick" text-anchor="end">${l}</text>`).join('')}
         <line x1="${X(cut)}" x2="${X(cut)}" y1="${m.t}" y2="${H - m.b}" class="cut"></line>
-        <text x="${X(cut) + 4}" y="${H - m.b + 32}" class="tick">custo alto →</text>
-        <text x="${W - m.r}" y="${m.t - 12}" class="quad" text-anchor="end">↗ Pilares: reter e valorizar</text>
-        <text x="${m.l}" y="${m.t - 12}" class="quad">↖ Apoiadores de baixo custo de saída</text>
-        <text x="${W - m.r}" y="${H - 6}" class="quad" text-anchor="end">Risco crítico: cuidado ↘</text>
-        <text x="${m.l}" y="${H - 6}" class="quad">↙ Resistentes de baixo impacto</text>
-        <text x="${(m.l + W - m.r) / 2}" y="${H - 6}" class="axis" text-anchor="middle">Custo de saída (0–100)</text>
+        <text x="${W - m.r}" y="${m.t - 12}" class="quad" text-anchor="end">↗ Pilares: manter e valorizar</text>
+        <text x="${m.l}" y="${m.t - 12}" class="quad">↖ Apoiam e são mais fáceis de repor</text>
+        <text x="${W - m.r}" y="${H - 6}" class="quad" text-anchor="end">Risco alto: resistem e fazem falta ↘</text>
+        <text x="${m.l}" y="${H - 6}" class="quad">↙ Resistem, mas fazem pouca falta</text>
+        <text x="${(m.l + W - m.r) / 2}" y="${H - m.b + 36}" class="axis" text-anchor="middle">Impacto se a pessoa sair (0 = nenhum · 100 = enorme)</text>
         ${pts}
       </svg>
       <div class="matrix-tip" hidden></div>
-      <div class="legend">${legend}<span>tamanho = influência</span><span><i class="lg-dot hollow-lg"></i>posição desconhecida</span></div>
+      <div class="legend">${legend}<span>bolinha maior = pessoa mais ouvida</span><span><i class="lg-dot hollow-lg"></i>postura desconhecida</span><span><i class="ln-cut"></i>a partir da linha tracejada, o impacto é alto</span></div>
     </div>`;
   }
 
@@ -949,12 +1131,12 @@
         render: (r) => `<i class="dot" style="background:${esc((dep(r.id) || {}).color)}"></i>${esc(r.name)}`,
       },
       { key: 'size', label: 'Pessoas' },
-      { key: 'density', label: 'Coesão interna', title: 'Densidade de laços dentro do setor', render: (r) => `${bar(r.density)} ${pct(r.density)}` },
-      { key: 'openness', label: 'Abertura', title: '% dos laços que vão para outras áreas', render: (r) => `${bar(r.openness)} ${pct(r.openness)}` },
+      { key: 'density', label: 'União da equipe', title: 'Quantos colegas do setor convivem entre si (100% = todos com todos)', render: (r) => `${bar(r.density)} ${pct(r.density)}` },
+      { key: 'openness', label: 'Contato com outras áreas', title: 'Parte das relações do setor que é com outras áreas', render: (r) => `${bar(r.openness)} ${pct(r.openness)}` },
       { key: 'negativeTies', label: 'Conflitos' },
-      { key: 'avgStance', label: 'Posic. médio', render: (r) => fx(r.avgStance, 1) },
-      { key: 'influence', label: 'Influência total', render: (r) => fx(r.influence) },
-      { key: 'conn', label: 'Conectores', nosort: true, render: (r) => r.connectors.map((c) => personLink(c.id)).join(', ') || '—' },
+      { key: 'avgPerformance', label: 'Desempenho médio', render: (r) => (r.avgPerformance === null ? '—' : fx(r.avgPerformance, 1) + ' de 5') },
+      { key: 'avgStance', label: 'Postura média', render: (r) => esc(stanceText({ stance: r.avgStance })) },
+      { key: 'conn', label: 'Quem liga às outras áreas', nosort: true, render: (r) => r.connectors.map((c) => personLink(c.id)).join(', ') || '—' },
       { key: 'act', label: '', nosort: true, render: (r) => `<button class="link" data-action="edit-dep" data-id="${esc(r.id)}">editar</button>` },
     ];
     $('#dep-table').innerHTML = data().departments.length
@@ -964,11 +1146,10 @@
       { key: 'name', label: 'Grupo / equipe' },
       { key: 'size', label: 'Pessoas' },
       { key: 'members', label: 'Membros', nosort: true, render: (r) => r.members.map(personLink).join(', ') },
-      { key: 'density', label: 'Coesão interna', render: (r) => `${bar(r.density)} ${pct(r.density)}` },
+      { key: 'density', label: 'União da equipe', render: (r) => `${bar(r.density)} ${pct(r.density)}` },
       { key: 'negativeTies', label: 'Conflitos' },
-      { key: 'avgPerformance', label: 'Desempenho médio', render: (r) => fx(r.avgPerformance, 1) },
-      { key: 'avgStance', label: 'Posição média', render: (r) => fx(r.avgStance, 1) },
-      { key: 'influence', label: 'Influência total', render: (r) => fx(r.influence) },
+      { key: 'avgPerformance', label: 'Desempenho médio', render: (r) => (r.avgPerformance === null ? '—' : fx(r.avgPerformance, 1) + ' de 5') },
+      { key: 'avgStance', label: 'Postura média', render: (r) => esc(stanceText({ stance: r.avgStance })) },
     ];
     $('#group-table').innerHTML = model.groups.length
       ? table('groups', gcols, model.groups, { key: 'size', dir: 'desc' })
@@ -1010,15 +1191,15 @@
       .relations.filter((r) => !tf || r.type === tf)
       .filter((r) => !q || (pname(r.source) + ' ' + pname(r.target)).toLowerCase().includes(q));
     const cols = [
-      { key: 'source', label: 'Origem', sort: (r) => pname(r.source), render: (r) => personLink(r.source) },
-      { key: 'type', label: 'Tipo', sort: (r) => r.type, render: (r) => esc((A.RELATION_TYPES[r.type] || { label: r.type }).label) },
-      { key: 'target', label: 'Destino', sort: (r) => pname(r.target), render: (r) => personLink(r.target) },
-      { key: 'strength', label: 'Força', sort: (r) => Number(r.strength) },
+      { key: 'source', label: 'Pessoa', sort: (r) => pname(r.source), render: (r) => personLink(r.source) },
+      { key: 'type', label: 'Relação', sort: (r) => r.type, render: (r) => esc((A.RELATION_TYPES[r.type] || { label: r.type }).label) },
+      { key: 'target', label: 'Com quem', sort: (r) => pname(r.target), render: (r) => personLink(r.target) },
+      { key: 'strength', label: 'Frequência', sort: (r) => Number(r.strength), render: (r) => esc(STRENGTH_TEXT[r.strength] || '') },
       {
-        key: 'sentiment', label: 'Sentimento', sort: (r) => A.sentimentOf(r),
+        key: 'sentiment', label: 'Clima', sort: (r) => A.sentimentOf(r),
         render: (r) => {
           const s = A.sentimentOf(r);
-          return `<span class="${s < 0 ? 'neg-text' : ''}">${s > 0 ? '+' : ''}${s}</span>`;
+          return `<span class="${s < 0 ? 'neg-text' : ''}">${esc(SENTIMENT_TEXT[s] || '')}</span>`;
         },
       },
       { key: 'notes', label: 'Observações', sort: (r) => r.notes || '' },
@@ -1048,9 +1229,9 @@
     box.innerHTML = `
       <div class="grid4">
         <label>Pessoa<select id="bulk-person">${peopleOptions(cur, 'Selecione…')}</select></label>
-        <label>Tipo<select id="bulk-type">${typeOptions(box.dataset.type || 'colaboracao')}</select></label>
-        <label>Força<select id="bulk-strength">${options([1, 2, 3, 4, 5].map((v) => [v, v]), box.dataset.strength || 3)}</select></label>
-        <label>Sentimento<select id="bulk-sent">${options(SENTIMENT_OPTIONS, box.dataset.sent || '')}</select></label>
+        <label>Tipo de relação<select id="bulk-type">${typeOptions(box.dataset.type || 'colaboracao')}</select></label>
+        <label>Frequência<select id="bulk-strength">${options(STRENGTH_OPTIONS, box.dataset.strength || 3)}</select></label>
+        <label>Clima<select id="bulk-sent">${options(SENTIMENT_OPTIONS, box.dataset.sent || '')}</select></label>
       </div>
       ${
         cur
@@ -1063,9 +1244,9 @@
                   .join('')}</fieldset>`
               )
               .join('')}</div>
-             <p class="muted small">Para tipos direcionados, a pessoa selecionada acima é a origem.</p>
+             <p class="muted small">Em "influencia", "ensina", "passa informações" e "boicota", a pessoa escolhida acima é quem faz a ação.</p>
              <button class="primary" data-action="bulk-add">Adicionar relações marcadas</button>`
-          : '<p class="muted">Escolha uma pessoa para marcar rapidamente com quem ela trabalha, quem influencia, com quem tem conflito…</p>'
+          : '<p class="muted">Escolha uma pessoa e marque, de uma vez, com quem ela trabalha, de quem é amiga, com quem tem conflito…</p>'
       }`;
   }
 
@@ -1075,15 +1256,15 @@
       r.id ? 'Editar relação' : 'Nova relação',
       `
       <div class="grid2">
-        <label>Origem<select name="source" required>${peopleOptions(r.source, 'Selecione…')}</select></label>
-        <label>Destino<select name="target" required>${peopleOptions(r.target, 'Selecione…')}</select></label>
+        <label>Pessoa<select name="source" required>${peopleOptions(r.source, 'Selecione…')}</select></label>
+        <label>Com quem<select name="target" required>${peopleOptions(r.target, 'Selecione…')}</select></label>
       </div>
-      <label>Tipo<select name="type">${typeOptions(r.type)}</select></label>
+      <label>Tipo de relação<select name="type">${typeOptions(r.type)}</select></label>
       <div class="grid2">
-        <label>Força / frequência (1–5)<select name="strength">${options([1, 2, 3, 4, 5].map((v) => [v, v]), r.strength)}</select></label>
-        <label>Sentimento<select name="sentiment">${options(SENTIMENT_OPTIONS, r.sentiment ?? '')}</select></label>
+        <label>Frequência<select name="strength">${options(STRENGTH_OPTIONS, r.strength)}</select></label>
+        <label>Clima<select name="sentiment">${options(SENTIMENT_OPTIONS, r.sentiment ?? '')}</select></label>
       </div>
-      <label>Observações / evidência<textarea name="notes" rows="2">${esc(r.notes)}</textarea></label>`,
+      <label>Observações (o que você viu)<textarea name="notes" rows="2">${esc(r.notes)}</textarea></label>`,
       (f) => {
         if (!f.source || !f.target || f.source === f.target) {
           toast('Escolha duas pessoas diferentes.');
@@ -1105,6 +1286,13 @@
   }
 
   // ------------------------------------------------------------- ANÁLISE
+  const PAIR_TAGS = {
+    'ponte única': 'única ligação',
+    'entre departamentos': 'liga setores',
+    'vínculo familiar': 'parentes/casal',
+    'núcleo de resistência': 'grupo de resistência',
+    'acesso à pessoa focal': 'acesso ao gerente',
+  };
   function renderAnalysis() {
     const box = $('#analysis');
     if (data().people.length < 2) {
@@ -1119,26 +1307,24 @@
     const rankingCols = [
       { key: 'name', label: 'Pessoa', sort: (r) => r.name, render: (r) => personLink(r.id) },
       { key: 'dep', label: 'Setor', sort: (r) => depName(r.departmentId), render: (r) => esc(depName(r.departmentId)) },
-      { key: 'influence', label: 'Influência', title: 'PageRank + intermediação + força dos laços', render: (r) => `${bar(r.influence)} ${fx(r.influence)}` },
-      { key: 'peso', label: 'Peso', title: 'Influência + conhecimento + posição formal', render: (r) => `${bar(r.peso)} ${fx(r.peso)}` },
-      { key: 'pagerank', label: 'PageRank', render: (r) => fx(r.pagerank, 3) },
-      { key: 'betweenness', label: 'Intermediação', render: (r) => fx(r.betweenness, 3) },
-      { key: 'closeness', label: 'Proximidade', render: (r) => fx(r.closeness) },
-      { key: 'ties', label: 'Laços' },
-      { key: 'knowledgeRisk', label: 'Risco conhec.', render: (r) => `${bar(r.knowledgeRisk, 'warn')} ${fx(r.knowledgeRisk)}` },
-      { key: 'tension', label: 'Tensão' },
-      { key: 'community', label: 'Cluster', render: (r) => r.community + 1 },
-      { key: 'stance', label: 'Posic.', sort: (r) => r.stance ?? -9, render: (r) => stanceBadge(r) },
+      { key: 'influence', label: 'Influência', title: 'O quanto os colegas ouvem e seguem a pessoa', render: (r) => meter(r.influence) },
+      { key: 'peso', label: 'Importância geral', title: 'Influência + conhecimento que só ela tem + cargo', render: (r) => meter(r.peso) },
+      { key: 'betweenness', label: 'Faz ponte', title: 'O quanto a comunicação entre colegas passa por ela', render: (r) => meter(Math.min(1, r.betweenness * 4)) },
+      { key: 'ties', label: 'Relações boas' },
+      { key: 'knowledgeRisk', label: 'Difícil de substituir', render: (r) => meter(r.knowledgeRisk, 'warn') },
+      { key: 'tension', label: 'No meio de conflitos', render: (r) => (r.tension ? r.tension : '—') },
+      { key: 'community', label: 'Turma', render: (r) => r.community + 1 },
+      { key: 'stance', label: 'Postura', sort: (r) => r.stance ?? -9, render: (r) => stanceBadge(r, false) },
     ];
 
     box.innerHTML = `
       <div class="kpis">
         ${kpi('Pessoas', model.n)}
-        ${kpi('Relações', data().relations.length)}
-        ${kpi('Densidade', pct(model.density), 'laços existentes / possíveis')}
-        ${kpi('Clusters', model.communities.length, 'grupos informais')}
-        ${kpi('Modularidade', fx(model.modularity), '> 0,4 = grupos bem separados')}
-        ${kpi('Componentes', model.components, '1 = todos conectados')}
+        ${kpi('Relações cadastradas', data().relations.length)}
+        ${kpi('Nível de convivência', pct(model.density), 'das duplas possíveis se relacionam')}
+        ${kpi('Turmas informais', model.communities.length, 'grupos que convivem mais entre si')}
+        ${kpi('Divisão em panelas', model.modularity > 0.4 ? 'Forte' : model.modularity > 0.25 ? 'Moderada' : 'Fraca', 'quanto as turmas são separadas')}
+        ${kpi('Grupos isolados', model.components - 1, model.components > 1 ? 'sem nenhuma relação com o resto' : 'todos estão conectados')}
       </div>
 
       <div class="card">
@@ -1147,18 +1333,18 @@
       </div>
 
       <div class="card">
-        <h3>Ranking de influência, peso e conhecimento</h3>
+        <h3>Quem é quem ${help('Clique no título de uma coluna para ordenar.')}</h3>
         ${table('ranking', rankingCols, M, { key: 'peso', dir: 'desc' })}
       </div>
 
       <div class="card">
-        <h3>Clusters (grupos informais)</h3>
-        <p class="muted small">Detectados pelo algoritmo de Louvain sobre os laços positivos. Clusters que misturam setores mostram onde o trabalho realmente acontece; um cluster com posicionamento médio negativo é um foco de resistência.</p>
+        <h3>Turmas informais (as "panelas")</h3>
+        <p class="muted small">Grupos de pessoas que convivem mais entre si do que com o resto, descobertos pelo sistema a partir das relações. Turmas que misturam setores mostram onde o trabalho realmente acontece. Uma turma com postura média de resistência é um foco de oposição.</p>
         <div class="cards">${model.communities
           .map(
             (c) => `<div class="mini-card" style="border-left-color:${CLUSTER_PALETTE[c.id % CLUSTER_PALETTE.length]}">
-              <strong>Cluster ${c.id + 1}</strong> · líder informal: ${personLink(c.leader)}<br>
-              <span class="small muted">${c.members.length} pessoas · ${c.departments} depto(s) · posic. médio ${fx(c.avgStance, 1)}</span>
+              <strong>Turma ${c.id + 1}</strong> · quem lidera: ${personLink(c.leader)}<br>
+              <span class="small muted">${c.members.length} pessoas · ${c.departments} setor(es) · postura média: ${esc(stanceText({ stance: c.avgStance }).toLowerCase())}</span>
               <div class="small">${c.members.map(personLink).join(', ')}</div></div>`
           )
           .join('')}</div>
@@ -1166,49 +1352,48 @@
 
       <div class="grid2">
         <div class="card">
-          <h3>Pares-chave</h3>
-          <p class="muted small">Laços que mais sustentam o fluxo da rede (intermediação da aresta) entre pessoas influentes.</p>
+          <h3>Duplas importantes</h3>
+          <p class="muted small">Relações por onde passa muita comunicação, entre pessoas ouvidas. Se uma dessas duplas brigar ou uma pessoa sair, a informação deixa de circular.</p>
           ${table('pairs', [
-            { key: 'pair', label: 'Par', nosort: true, render: (r) => `${personLink(r.a)} ↔ ${personLink(r.b)}` },
-            { key: 'strength', label: 'Força' },
-            { key: 'score', label: 'Relevância', render: (r) => `${bar(r.score)} ${fx(r.score)}` },
-            { key: 'tags', label: 'Sinais', nosort: true, render: (r) => r.tags.map((t) => `<span class="badge small">${esc(t)}</span>`).join(' ') },
+            { key: 'pair', label: 'Dupla', nosort: true, render: (r) => `${personLink(r.a)} ↔ ${personLink(r.b)}` },
+            { key: 'score', label: 'Importância', render: (r) => meter(r.score) },
+            { key: 'tags', label: 'Observações', nosort: true, render: (r) => r.tags.map((t) => `<span class="badge small">${esc(PAIR_TAGS[t] || t)}</span>`).join(' ') },
           ], model.keyPairs.slice(0, 15), { key: 'score', dir: 'desc' })}
         </div>
         <div class="card">
-          <h3>Conflitos críticos</h3>
-          <p class="muted small">Intensidade × influência das duas pessoas.</p>
+          <h3>Conflitos mais sérios</h3>
+          <p class="muted small">Brigas mais intensas entre pessoas mais ouvidas aparecem primeiro.</p>
           ${table('conflicts', [
-            { key: 'pair', label: 'Par', nosort: true, render: (r) => `${personLink(r.a)} ✕ ${personLink(r.b)}` },
-            { key: 'intensity', label: 'Intensidade', render: (r) => fx(r.intensity, 1) },
-            { key: 'score', label: 'Criticidade', render: (r) => fx(r.score) },
-            { key: 'f', label: '', nosort: true, render: (r) => (r.involvesFocal ? '<span class="badge st-focal">pessoa focal</span>' : '') },
+            { key: 'pair', label: 'Dupla', nosort: true, render: (r) => `${personLink(r.a)} ✕ ${personLink(r.b)}` },
+            { key: 'score', label: 'Gravidade', render: (r) => meter(Math.min(1, r.score / Math.max(1e-9, model.conflicts[0].score)), 'bad') },
+            { key: 'f', label: '', nosort: true, render: (r) => (r.involvesFocal ? '<span class="badge st-focal">envolve o gerente</span>' : '') },
           ], model.conflicts.slice(0, 15), { key: 'score', dir: 'desc' })}
         </div>
       </div>
 
       <div class="grid2">
         <div class="card">
-          <h3>Organização "sombra"</h3>
-          <p class="muted small">Comparação entre posição formal e influência real.</p>
-          <h4>Líderes informais (influência acima do cargo)</h4>
-          <ul>${informal.map((s) => `<li>${personLink(s.id)} — influência #${s.influenceRank}, cargo #${s.formalRank}</li>`).join('') || '<li class="muted">Nenhum destaque.</li>'}</ul>
-          <h4>Autoridade com pouca influência</h4>
-          <ul>${formalOnly.map((s) => `<li>${personLink(s.id)} — cargo #${s.formalRank}, influência #${s.influenceRank}</li>`).join('') || '<li class="muted">Nenhum destaque.</li>'}</ul>
+          <h3>Cargo × influência real</h3>
+          <p class="muted small">Nem sempre quem tem o cargo mais alto é quem os colegas mais ouvem.</p>
+          <h4>Líderes informais: ouvidos além do cargo</h4>
+          <ul>${informal.map((s) => `<li>${personLink(s.id)} — é a ${s.influenceRank}ª pessoa mais ouvida, mas o cargo está em ${s.formalRank}º lugar</li>`).join('') || '<li class="muted">Nenhum destaque.</li>'}</ul>
+          <h4>Cargo alto, pouca influência</h4>
+          <ul>${formalOnly.map((s) => `<li>${personLink(s.id)} — cargo em ${s.formalRank}º lugar, mas é só a ${s.influenceRank}ª mais ouvida</li>`).join('') || '<li class="muted">Nenhum destaque.</li>'}</ul>
         </div>
         <div class="card">
-          <h3>Pontos únicos de falha</h3>
-          <p class="muted small">Pessoas cuja saída desconecta partes da rede e conhecimentos com um só detentor.</p>
-          <p>${model.articulationPoints.map(personLink).join(', ') || '<span class="muted">Nenhum ponto de articulação.</span>'}</p>
-          <h4>Conhecimento com um único detentor</h4>
+          <h3>Dependências perigosas</h3>
+          <h4>Únicas ligações entre partes da equipe</h4>
+          <p class="muted small">Se estas pessoas saírem, alguns colegas ficam sem contato com o resto da empresa.</p>
+          <p>${model.articulationPoints.map(personLink).join(', ') || '<span class="muted">Nenhuma — a rede tem caminhos alternativos.</span>'}</p>
+          <h4>Conhecimentos que só uma pessoa sabe</h4>
           <ul class="cols">${model.skills.filter((s) => s.holders.length === 1).map((s) => `<li>${esc(s.skill)} — ${personLink(s.holders[0])}</li>`).join('') || '<li class="muted">Nenhum.</li>'}</ul>
         </div>
       </div>
 
       <div class="card">
-        <h3>Tríades em tensão</h3>
-        <p class="muted small">Trios com número ímpar de laços negativos (teoria do equilíbrio estrutural). Quem está "dividido" tem laço positivo com duas pessoas que estão em conflito entre si — é pressionado a escolher um lado.</p>
-        <ul>${model.triads.slice(0, 20).map((t) => `<li>${t.members.map(personLink).join(' · ')}${t.torn ? ` — dividido(a): <strong>${esc(pname(t.torn))}</strong>` : ' — três laços negativos'}</li>`).join('') || '<li class="muted">Nenhuma.</li>'}</ul>
+        <h3>Pessoas no meio de conflitos</h3>
+        <p class="muted small">Quando alguém se dá bem com duas pessoas que brigam entre si, essa pessoa fica dividida e é pressionada a escolher um lado. Vale tirá-la do meio.</p>
+        <ul>${model.triads.slice(0, 20).map((t) => (t.torn ? `<li><strong>${esc(pname(t.torn))}</strong> está no meio de ${t.members.filter((x) => x !== t.torn).map(personLink).join(' e ')}</li>` : `<li>${t.members.map(personLink).join(', ')} — os três estão em conflito</li>`)).join('') || '<li class="muted">Nenhuma situação assim.</li>'}</ul>
       </div>`;
   }
 
@@ -1219,24 +1404,23 @@
       box.innerHTML = emptyState('Cadastre pessoas e relações primeiro.');
       return;
     }
-    const focalSel = `<label class="inline">Pessoa focal (quem está sofrendo boicote / liderando a mudança):
+    const focalSel = `<label class="inline">Quem é o gerente (quem lidera a mudança e sofre o boicote)?
       <select id="focal-select">${peopleOptions(model.focalId, 'Selecione…')}</select></label>`;
     const F = model.focal;
     if (!F) {
-      box.innerHTML = `<div class="card">${focalSel}<p class="muted">Escolha a pessoa focal — por exemplo, o novo gerente geral — para calcular apoiadores, resistentes, núcleos de boicote e porteiros.</p></div>`;
+      box.innerHTML = `<div class="card">${focalSel}<p class="muted">Escolha o gerente para o sistema mostrar quem apoia, quem resiste, os grupos de resistência e por quem passa a comunicação dele.</p></div>`;
       return;
     }
-    const recs = A.recommendations(data(), model).filter((r) => ['Resistência', 'Governança', 'Comunicação', 'Engajamento', 'Aliados', 'Alcance'].includes(r.area));
+    const recs = A.recommendations(data(), model).filter((r) => ['Resistência', 'Regra para parentes', 'Comunicação', 'Conquistar', 'Aliados', 'Contato direto'].includes(r.area));
     const others = model.metrics.filter((m) => m.id !== model.focalId);
     box.innerHTML = `
       <div class="card">${focalSel}</div>
       <div class="kpis">
-        ${kpi('Apoiadores', F.count.apoiador || 0)}
+        ${kpi('Apoiam', F.count.apoiador || 0)}
         ${kpi('Neutros', F.count.neutro || 0)}
-        ${kpi('Resistentes', F.count.resistente || 0)}
-        ${kpi('Poder de resistência', fx(F.resistancePower), 'Σ influência × intensidade')}
-        ${kpi('Poder de apoio', fx(F.supportPower))}
-        ${kpi('Alcance da focal', pct(F.reach2Share), 'da empresa em até 2 passos')}
+        ${kpi('Resistem', F.count.resistente || 0)}
+        ${kpi('Quem está mais forte?', F.resistancePower > F.supportPower * 1.1 ? 'Resistência' : F.supportPower > F.resistancePower * 1.1 ? 'Apoio' : 'Empate', 'soma da influência de quem apoia × de quem resiste')}
+        ${kpi('Alcance do gerente', pct(F.reach2Share), 'da empresa que ele alcança direto ou por um colega')}
       </div>
 
       <div class="card">
@@ -1245,54 +1429,52 @@
       </div>
 
       <div class="card">
-        <h3>Núcleos de resistência</h3>
-        <p class="muted small">Resistentes conectados entre si por laços positivos formam uma coalizão. "Audiência" = pessoas não resistentes ligadas diretamente ao núcleo (quem ele pode contaminar).</p>
+        <h3>Grupos de resistência</h3>
+        <p class="muted small">Pessoas que resistem ao gerente e são próximas entre si. "Podem influenciar" = colegas que ainda não resistem, mas convivem diretamente com o grupo.</p>
         <div class="cards">${F.nuclei
           .map(
             (nu, i) => `<div class="mini-card bad">
-              <strong>Núcleo ${i + 1}</strong> · poder ${fx(nu.power)} · ${nu.departments} depto(s)<br>
+              <strong>Grupo ${i + 1}</strong> · ${nu.members.length} pessoa(s) · ${nu.departments} setor(es)<br>
               <div>${nu.members.map(personLink).join(', ')}</div>
-              ${nu.familyPairs.length ? `<div class="small"><span class="badge fam">vínculo familiar</span> ${nu.familyPairs.map(([a, b]) => `${esc(pname(a))} + ${esc(pname(b))}`).join('; ')}</div>` : ''}
-              <div class="small muted">Audiência: ${nu.audience.length} pessoas (${pct(nu.audienceShare)}) — ${nu.audience.map((id) => esc(pname(id))).join(', ')}</div>
-              <button class="small" data-action="simulate-group" data-id="${esc(nu.members.join(','))}">Simular saída do núcleo</button>
+              ${nu.familyPairs.length ? `<div class="small"><span class="badge fam">parentes/casal</span> ${nu.familyPairs.map(([a, b]) => `${esc(pname(a))} e ${esc(pname(b))}`).join('; ')}</div>` : ''}
+              <div class="small muted">Podem influenciar ${nu.audience.length} colegas (${pct(nu.audienceShare)} da empresa): ${nu.audience.map((id) => esc(pname(id))).join(', ')}</div>
+              <button class="small" data-action="simulate-group" data-id="${esc(nu.members.join(','))}">E se o grupo sair?</button>
             </div>`
           )
-          .join('') || '<p class="muted">Nenhum resistente identificado.</p>'}</div>
+          .join('') || '<p class="muted">Ninguém resistindo no momento.</p>'}</div>
       </div>
 
       <div class="grid2">
         <div class="card">
-          <h3>Porteiros da pessoa focal</h3>
-          <p class="muted small">Por quem passam os caminhos mais curtos da focal até o resto da empresa. Porteiro resistente = risco de informação filtrada ou bloqueada.</p>
+          <h3>Por quem passa a comunicação do gerente</h3>
+          <p class="muted small">Para chegar às equipes, o recado do gerente passa por estas pessoas. Se uma delas resiste, a mensagem pode chegar filtrada, atrasada ou distorcida.</p>
           ${table('gate', [
             { key: 'name', label: 'Pessoa', sort: (r) => pname(r.id), render: (r) => personLink(r.id) },
-            { key: 'dependency', label: 'Dependência', render: (r) => `${bar(r.dependency, r.stance === 'resistente' ? 'bad' : '')} ${pct(r.dependency)}` },
-            { key: 'stance', label: 'Posic.', render: (r) => `<span class="badge st-${r.stance}">${esc(r.stance)}</span>` },
+            { key: 'dependency', label: 'Parte da empresa', render: (r) => `${bar(r.dependency, r.stance === 'resistente' ? 'bad' : '')} ${pct(r.dependency)}` },
+            { key: 'stance', label: 'Postura', render: (r) => stanceBadge(model.byId.get(r.id), false) },
           ], F.gatekeepers.slice(0, 10), { key: 'dependency', dir: 'desc' })}
         </div>
         <div class="card">
-          <h3>Prioridade de engajamento</h3>
-          <p class="muted small">Neutros influentes e expostos à pressão dos resistentes: quem conquistar primeiro.</p>
+          <h3>Quem conquistar primeiro</h3>
+          <p class="muted small">Pessoas neutras, ouvidas pelos colegas e que convivem com quem resiste. Se o gerente não as conquistar, o grupo de resistência pode conquistar.</p>
           ${table('engage', [
             { key: 'name', label: 'Pessoa', sort: (r) => pname(r.id), render: (r) => personLink(r.id) },
-            { key: 'score', label: 'Prioridade', render: (r) => `${bar(r.score)} ${fx(r.score)}` },
-            { key: 'pressure', label: 'Pressão', render: (r) => `${bar(r.pressure, 'bad')} ${fx(r.pressure)}` },
-            { key: 'exposure', label: 'Exposição', render: (r) => fx(r.exposure, 1) },
+            { key: 'score', label: 'Urgência', render: (r) => meter(Math.min(1, r.score / Math.max(1e-9, F.engagement[0].score))) },
+            { key: 'pressure', label: 'Pressão de quem resiste', render: (r) => meter(r.pressure, 'bad') },
           ], F.engagement.slice(0, 10), { key: 'score', dir: 'desc' })}
         </div>
       </div>
 
       <div class="card">
-        <h3>Mapa de posicionamento</h3>
-        <p class="muted small">Origem: <em>informado</em> (avaliação sua), <em>relação direta</em> (sentimento das relações com a focal), <em>ocorrências</em> (fatos registrados) ou <em>inferido</em> (média da vizinhança — confirme antes de agir).</p>
+        <h3>Postura de cada pessoa</h3>
+        <p class="muted small">De onde vem a postura: <em>avaliado por você</em> (o que você marcou na ficha), <em>pela relação com o gerente</em> (clima das relações cadastradas), <em>pelas ocorrências</em> (fatos registrados) ou <em>estimado pelo sistema</em> (pelas pessoas próximas — é um palpite, confirme antes de agir).</p>
         ${table('stance', [
           { key: 'name', label: 'Pessoa', sort: (r) => r.name, render: (r) => personLink(r.id) },
           { key: 'dep', label: 'Setor', sort: (r) => depName(r.departmentId), render: (r) => esc(depName(r.departmentId)) },
-          { key: 'stance', label: 'Posicionamento', sort: (r) => r.stance ?? -9, render: (r) => stanceBadge(r) },
-          { key: 'influence', label: 'Influência', render: (r) => `${bar(r.influence)} ${fx(r.influence)}` },
-          { key: 'exposure', label: 'Exposição', title: 'Média do posicionamento dos vizinhos', render: (r) => fx(r.exposure, 1) },
-          { key: 'pressure', label: 'Pressão', title: 'Influência dos resistentes ao redor', render: (r) => fx(r.pressure) },
-          { key: 'inc', label: 'Ocorrências (−/+)', sort: (r) => (F.incidentsBy[r.id] || {}).negative || 0, render: (r) => { const x = F.incidentsBy[r.id]; return x ? `${x.negative} / ${x.positive}` : '—'; } },
+          { key: 'stance', label: 'Postura', sort: (r) => r.stance ?? -9, render: (r) => stanceBadge(r) },
+          { key: 'influence', label: 'Influência', render: (r) => meter(r.influence) },
+          { key: 'exposure', label: 'Ambiente ao redor', title: 'Como é a postura das pessoas próximas a ela', sort: (r) => r.exposure ?? -9, render: (r) => esc(r.exposure === null || r.exposure === undefined ? '—' : stanceText({ stance: r.exposure }).toLowerCase()) },
+          { key: 'inc', label: 'Boicotes / apoios registrados', sort: (r) => (F.incidentsBy[r.id] || {}).negative || 0, render: (r) => { const x = F.incidentsBy[r.id]; return x ? `${x.negative} / ${x.positive}` : '—'; } },
         ], others, { key: 'stance', dir: 'asc' })}
       </div>`;
   }
@@ -1301,7 +1483,7 @@
   function renderSimulation() {
     const box = $('#simulation');
     if (data().people.length < 3) {
-      box.innerHTML = emptyState('Cadastre pessoas e relações para simular.');
+      box.innerHTML = emptyState('Cadastre pessoas e relações para fazer simulações.');
       return;
     }
     const byDep = new Map();
@@ -1324,51 +1506,51 @@
       const b = r.breakdown;
       result = `
         <div class="card">
-          <h3>Resultado: saída de ${r.removed.map((id) => esc(pname(id))).join(', ')}</h3>
+          <h3>E se sair: ${r.removed.map((id) => esc(pname(id))).join(', ')}</h3>
+          <p class="verdict ${r.operationalCost >= 30 ? 'bad' : r.operationalCost >= 15 ? 'warn' : 'ok'}">${simVerdict(r)}</p>
           <div class="kpis">
-            ${kpi('Custo operacional', `${Math.round(r.operationalCost)}<small>/100</small>`, 'conhecimento, influência, conectividade')}
-            ${kpi('Redução da resistência', pct(r.resistanceReduction), `${fx(r.resistanceBefore)} → ${fx(r.resistanceAfter)}`)}
-            ${kpi('Perda de eficiência da rede', pct(r.efficiencyLoss), 'comunicação entre quem fica')}
-            ${kpi('Influência removida', pct(r.influenceShare))}
-            ${kpi('Grupos desconectados', `${r.componentsBefore} → ${r.componentsAfter}`)}
-            ${r.focalReachBefore !== null ? kpi('Alcance da focal', `${pct(r.focalReachBefore)} → ${pct(r.focalReachAfter)}`) : ''}
+            ${kpi('Impacto na empresa', `${Math.round(r.operationalCost)}<small> de 100</small>`, r.operationalCost >= 30 ? 'alto' : r.operationalCost >= 15 ? 'médio' : 'baixo')}
+            ${kpi('Resistência ao gerente', r.resistanceReduction > 0 ? `cai ${pct(r.resistanceReduction)}` : 'não muda')}
+            ${kpi('Comunicação entre quem fica', r.efficiencyLoss > 0.005 ? `piora ${pct(r.efficiencyLoss)}` : 'não muda')}
+            ${kpi('Influência que sai junto', pct(r.influenceShare), 'da influência total da empresa')}
+            ${r.focalReachBefore !== null ? kpi('Alcance do gerente', `${pct(r.focalReachBefore)} → ${pct(r.focalReachAfter)}`) : ''}
           </div>
+          <h4>De onde vem o impacto</h4>
           <table class="mini">
-            <tr><td>Eficiência</td><td>${bar(b.efficiency, 'warn')}</td></tr>
-            <tr><td>Isolamento</td><td>${bar(b.isolation, 'warn')}</td></tr>
-            <tr><td>Influência</td><td>${bar(b.influence, 'warn')}</td></tr>
-            <tr><td>Conhecimento</td><td>${bar(b.knowledge, 'warn')}</td></tr>
-            <tr><td>Contágio</td><td>${bar(b.contagion, 'warn')}</td></tr>
+            <tr><td>Conhecimento que se perde</td><td>${meter(b.knowledge, 'warn')}</td></tr>
+            <tr><td>Influência que sai</td><td>${meter(b.influence, 'warn')}</td></tr>
+            <tr><td>Desempenho de quem sai</td><td>${meter(b.performance, 'warn')}</td></tr>
+            <tr><td>Comunicação que piora</td><td>${meter(b.efficiency, 'warn')}</td></tr>
+            <tr><td>Colegas que podem sair junto</td><td>${meter(b.contagion, 'warn')}</td></tr>
+            <tr><td>Pessoas que ficam isoladas</td><td>${meter(b.isolation, 'warn')}</td></tr>
           </table>
           <div class="grid2">
             <div>
-              <h4>Conhecimento perdido</h4>
-              <ul>${r.skillsLost.map((s) => `<li>${esc(s)}</li>`).join('') || '<li class="muted">Nenhum (há outra pessoa que domina).</li>'}</ul>
-              <h4>Conhecimento que fica com uma só pessoa</h4>
+              <h4>Conhecimento que a empresa perde</h4>
+              <ul>${r.skillsLost.map((s) => `<li>${esc(s)}</li>`).join('') || '<li class="muted">Nenhum: há outra pessoa que sabe.</li>'}</ul>
+              <h4>Conhecimento que passa a depender de uma só pessoa</h4>
               <ul>${r.skillsAtRisk.map((s) => `<li>${esc(s.skill)} — ${personLink(s.holder)}</li>`).join('') || '<li class="muted">Nenhum.</li>'}</ul>
-              <h4>Pessoas que ficam isoladas da rede</h4>
+              <h4>Pessoas que ficam sem contato com o resto</h4>
               <ul>${r.isolated.map((id) => `<li>${personLink(id)}</li>`).join('') || '<li class="muted">Nenhuma.</li>'}</ul>
             </div>
             <div>
-              <h4>Risco de contágio (laços fortes com quem sai)</h4>
-              <p class="muted small">Podem se desengajar, se solidarizar ou sair junto. Planeje conversas com essas pessoas no mesmo dia.</p>
-              <ul>${r.contagion.map((c) => `<li>${personLink(c.id)} ← ${esc(pname(c.from))} · intensidade do laço ${c.strength}${c.family ? ' <span class="badge fam">familiar</span>' : ''} <span class="badge st-${c.stance}">${esc(c.stance)}</span></li>`).join('') || '<li class="muted">Nenhum laço forte.</li>'}</ul>
-              <p class="small">Laços positivos rompidos: ${r.positiveTies} · conflitos removidos: ${r.negativeTies}</p>
+              <h4>Colegas que podem sair junto ou se desmotivar</h4>
+              <p class="muted small">São muito próximos de quem sai. Converse com eles no mesmo dia do desligamento.</p>
+              <ul>${r.contagion.map((c) => `<li>${personLink(c.id)} — próximo(a) de ${esc(pname(c.from))}${c.family ? ' <span class="badge fam">parente/casal</span>' : ''} ${stanceBadge(model.byId.get(c.id), false)}</li>`).join('') || '<li class="muted">Ninguém muito próximo.</li>'}</ul>
             </div>
           </div>
         </div>`;
     }
 
     const rankHtml = ranking
-      ? `<div class="card"><h3>Impacto individual de saída</h3>
-          <p class="muted small">Cada pessoa simulada isoladamente. Custo alto + redução de resistência alta = decisão difícil: prepare sucessão e transferência de conhecimento antes.</p>
+      ? `<div class="card"><h3>Impacto da saída de cada pessoa</h3>
+          <p class="muted small">Cada pessoa simulada sozinha. Quando o impacto é alto e a resistência também cai muito, a decisão é difícil: treine um substituto antes de qualquer passo.</p>
           ${table('impact', [
             { key: 'name', label: 'Pessoa', sort: (r) => pname(r.id), render: (r) => personLink(r.id) },
-            { key: 'operationalCost', label: 'Custo operacional', render: (r) => `${bar(r.operationalCost / 100, 'warn')} ${Math.round(r.operationalCost)}` },
-            { key: 'resistanceReduction', label: 'Redução da resistência', render: (r) => `${bar(r.resistanceReduction, 'ok')} ${pct(r.resistanceReduction)}` },
-            { key: 'skillsLost', label: 'Conhec. perdidos' },
-            { key: 'isolated', label: 'Isolados' },
-            { key: 'contagion', label: 'Contágio' },
+            { key: 'operationalCost', label: 'Impacto na empresa', render: (r) => `<span class="nowrap">${bar(r.operationalCost / 100, 'warn')} ${Math.round(r.operationalCost)} de 100</span>` },
+            { key: 'resistanceReduction', label: 'Quanto a resistência cai', render: (r) => `${bar(r.resistanceReduction, 'ok')} ${pct(r.resistanceReduction)}` },
+            { key: 'skillsLost', label: 'Conhecimentos perdidos' },
+            { key: 'contagion', label: 'Colegas que podem sair junto' },
           ], ranking, { key: 'operationalCost', dir: 'desc' })}</div>`
       : '';
 
@@ -1376,12 +1558,23 @@
       <div class="card">
         <div class="sim-picker">${picker}</div>
         <div class="btn-row">
-          <button class="primary" data-action="run-sim">Simular saída das selecionadas</button>
-          <button data-action="clear-sim">Limpar seleção</button>
-          <button data-action="run-ranking">Calcular ranking de impacto de todos</button>
+          <button class="primary" data-action="run-sim">E se as marcadas saírem?</button>
+          <button data-action="clear-sim">Desmarcar todas</button>
+          <button data-action="run-ranking">Ver o impacto de cada pessoa</button>
         </div>
       </div>
       ${result}${rankHtml}`;
+  }
+
+  // Frase-resumo da simulação, para quem não quer ler os números.
+  function simVerdict(r) {
+    const names = r.removed.map(pname).join(', ');
+    const imp = r.operationalCost >= 30 ? 'faria muita falta' : r.operationalCost >= 15 ? 'faria alguma falta' : 'faria pouca falta';
+    const parts = [`A saída de ${names} ${imp} para a empresa`];
+    if (r.skillsLost.length) parts.push(`a empresa perderia ${r.skillsLost.length} conhecimento(s) que só ${r.removed.length > 1 ? 'eles sabem' : 'essa pessoa sabe'}`);
+    if (r.contagion.length) parts.push(`${r.contagion.length} colega(s) próximo(s) podem se desmotivar ou sair junto`);
+    if (r.resistanceReduction >= 0.2) parts.push(`a resistência ao gerente cairia ${pct(r.resistanceReduction)}`);
+    return esc(parts.join('; ') + '.');
   }
 
   // --------------------------------------------------------- OCORRÊNCIAS
@@ -1390,9 +1583,9 @@
     const cols = [
       { key: 'date', label: 'Data' },
       { key: 'type', label: 'Tipo', render: (r) => { const t = A.INCIDENT_TYPES[r.type] || { label: r.type, valence: 0 }; return `<span class="${t.valence < 0 ? 'neg-text' : t.valence > 0 ? 'ok-text' : ''}">${esc(t.label)}</span>`; } },
-      { key: 'actors', label: 'Quem', sort: (r) => (r.actors || []).map(pname).join(), render: (r) => (r.actors || []).map(personLink).join(', ') },
-      { key: 'targets', label: 'Afetado(s)', sort: (r) => (r.targets || []).map(pname).join(), render: (r) => (r.targets || []).map(personLink).join(', ') },
-      { key: 'severity', label: 'Gravidade' },
+      { key: 'actors', label: 'Quem fez', sort: (r) => (r.actors || []).map(pname).join(), render: (r) => (r.actors || []).map(personLink).join(', ') },
+      { key: 'targets', label: 'Quem foi afetado', sort: (r) => (r.targets || []).map(pname).join(), render: (r) => (r.targets || []).map(personLink).join(', ') },
+      { key: 'severity', label: 'Gravidade', render: (r) => esc(['', 'Muito leve', 'Leve', 'Média', 'Grave', 'Muito grave'][r.severity] || '') },
       { key: 'description', label: 'Descrição' },
       { key: 'act', label: '', nosort: true, render: (r) => `<button class="link" data-action="edit-inc" data-id="${esc(r.id)}">editar</button>` },
     ];
@@ -1416,11 +1609,11 @@
         <label>Tipo<select name="type">${options(Object.entries(A.INCIDENT_TYPES).map(([k, t]) => [k, t.label]), ev.type)}</select></label>
       </div>
       <div class="grid2">
-        <label>Quem fez (Ctrl/Cmd para vários)${multi('actors', ev.actors || [])}</label>
+        <label>Quem fez (segure Ctrl para escolher vários)${multi('actors', ev.actors || [])}</label>
         <label>Quem foi afetado${multi('targets', ev.targets || [])}</label>
       </div>
-      <label>Gravidade (1–5)<select name="severity">${options([1, 2, 3, 4, 5].map((v) => [v, v]), ev.severity)}</select></label>
-      <label>Descrição objetiva (fato, data, impacto)<textarea name="description" rows="4">${esc(ev.description)}</textarea></label>`,
+      <label>Gravidade<select name="severity">${options([[1, 'Muito leve'], [2, 'Leve'], [3, 'Média'], [4, 'Grave'], [5, 'Muito grave']], ev.severity)}</select></label>
+      <label>O que aconteceu (fato, quando e qual o prejuízo)<textarea name="description" rows="4">${esc(ev.description)}</textarea></label>`,
       (f, form) => {
         const sel = (n) => [...form.querySelector(`[name="${n}"]`).selectedOptions].map((o) => o.value);
         S.upsert('incidents', { id: ev.id, date: f.date, type: f.type, actors: sel('actors'), targets: sel('targets'), severity: Number(f.severity), description: f.description }, 'i');
@@ -1509,9 +1702,9 @@
         <div class="card">
           <h3>Configurações</h3>
           <label>Nome da empresa<input id="set-company" value="${esc(s.companyName)}"></label>
-          <label>Pessoa focal (análise de resistência)<select id="set-focal">${peopleOptions(s.focalId, '—')}</select></label>
-          <label title="0 ignora a hierarquia formal na rede informal">Peso do laço formal gestor–liderado (0–5)
-            <select id="set-formal">${options([0, 1, 2, 3, 4, 5].map((v) => [v, v]), s.formalTieStrength)}</select></label>
+          <label>Quem é o gerente (quem lidera a mudança)<select id="set-focal">${peopleOptions(s.focalId, '—')}</select></label>
+          <label>Chefe e equipe contam como relação? ${help('Quando não há relação cadastrada entre chefe e subordinado, o sistema pode supor que eles conversam. Use "Não" se quiser analisar só as relações cadastradas.')}
+            <select id="set-formal">${options([[0, 'Não'], [1, 'Sim, como contato raro'], [2, 'Sim, como contato às vezes (padrão)'], [3, 'Sim, como contato semanal']], s.formalTieStrength)}</select></label>
           <button class="primary" data-action="save-settings">Salvar configurações</button>
         </div>
         <div class="card">
@@ -1726,6 +1919,46 @@
       G.disconnect();
       renderGitHubCard();
     },
+    'kn-suggest': () => {
+      const n = addSuggestedKnowledge();
+      afterSilentEdit(currentView === 'colaboradores');
+      if (currentView === 'conhecimentos') renderConhecimentos();
+      toast(n ? `${n} conhecimento(s) adicionados à lista. Ajuste a importância de cada um.` : 'A lista sugerida já está toda incluída.');
+    },
+    'kn-add': () => {
+      const name = $('#kn-cat-name').value;
+      if (!name.trim()) return toast('Digite o nome do conhecimento.');
+      addKnowledge(name, $('#kn-cat-category').value, $('#kn-cat-importance').value);
+      afterSilentEdit(false);
+      renderConhecimentos();
+      const inp = $('#kn-cat-name');
+      if (inp) inp.focus();
+    },
+    'kn-newcat': () => {
+      const name = (prompt('Nome da nova categoria (ex.: Máquinas, Clientes, Qualidade):') || '').trim();
+      if (!name) return;
+      renderConhecimentos();
+      const sel = $('#kn-cat-category');
+      sel.insertAdjacentHTML('beforeend', `<option value="${esc(name)}">${esc(name)}</option>`);
+      sel.value = name;
+      $('#kn-cat-name').focus();
+    },
+    'kn-del': (id) => {
+      const k = knowledge().find((x) => x.id === id);
+      const n = knHolders(id).length;
+      if (!confirm(`Excluir "${k.name}" da lista?${n ? ` Ele será desmarcado de ${n} pessoa(s).` : ''}`)) return;
+      S.remove('knowledge', id, { silent: true });
+      afterSilentEdit(false);
+      renderConhecimentos();
+    },
+    'kn-add-ficha': () => {
+      const name = $('#kn-new-name').value;
+      if (!name.trim()) return toast('Digite o conhecimento.');
+      const k = addKnowledge(name, $('#kn-new-cat').value, 2);
+      const p = person(fichaId);
+      updatePerson({ skills: [...new Set([...(p.skills || []), k.id])] }, true);
+      toast(`"${k.name}" incluído na lista e marcado.`);
+    },
     'build-board': () => {
       getBoard();
       renderPainel();
@@ -1736,7 +1969,7 @@
     'edit-inc': (id) => incidentForm(data().incidents.find((x) => x.id === id)),
     'set-focal': (id) => {
       S.setSettings({ focalId: id });
-      toast(`${pname(id)} definida como pessoa focal.`);
+      toast(`${pname(id)} marcado(a) como gerente.`);
     },
     'simulate-person': (id) => {
       simSelection.clear();
@@ -1834,6 +2067,21 @@
       else v = v.trim();
       return updatePerson({ [f]: v }, f === 'departmentId');
     }
+    if (t.dataset.kn && fichaId) {
+      const p = person(fichaId);
+      const set = new Set(p.skills || []);
+      if (t.checked) set.add(t.dataset.kn);
+      else set.delete(t.dataset.kn);
+      return updatePerson({ skills: [...set] }, true);
+    }
+    if (t.dataset.kid) {
+      const f = t.dataset.kfield;
+      const v = f === 'importance' ? Number(t.value) : t.value.trim();
+      if (f === 'name' && !v) return renderConhecimentos();
+      S.upsert('knowledge', { id: t.dataset.kid, [f]: v }, 'k', { silent: true });
+      afterSilentEdit(false);
+      return renderConhecimentos();
+    }
     if (t.dataset.rel) {
       const f = t.dataset.relfield;
       const v = f === 'type' ? t.value : t.value === '' ? null : Number(t.value);
@@ -1891,12 +2139,28 @@
   };
   on('#rel-filter', 'input', () => renderRelations());
   on('#cad-search', 'input', () => renderCadList());
+  // Filtro do checklist: esconde itens sem redesenhar a ficha (mantém o foco).
+  document.addEventListener('input', (e) => {
+    if (e.target.id !== 'kn-filter') return;
+    knFilter = e.target.value.trim().toLowerCase();
+    $$('#ficha .kn-item').forEach((el) => {
+      el.hidden = !!knFilter && !el.querySelector('.kn-name').textContent.toLowerCase().includes(knFilter);
+    });
+  });
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const id = e.target.id;
     if (id === 'group-input' || id === 'skill-input') {
       e.preventDefault();
       addChip(id === 'group-input' ? 'groups' : 'skills', e.target.value);
+    } else if (id === 'kn-new-name') {
+      e.preventDefault();
+      actions['kn-add-ficha']();
+    } else if (id === 'kn-cat-name') {
+      e.preventDefault();
+      actions['kn-add']();
+    } else if (e.target.classList.contains('kn-edit')) {
+      e.target.blur();
     } else if (id === 'link-person') {
       e.preventDefault();
       addLinkFromFicha();

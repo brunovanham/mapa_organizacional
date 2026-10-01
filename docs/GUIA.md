@@ -22,6 +22,40 @@ O sistema mede essa estrutura para que as decisões se apoiem em dados e não s�
 
 ---
 
+## Glossário: o que cada palavra da tela significa
+
+| Na tela | Em termos simples | Nome técnico (para quem quiser pesquisar) |
+|---|---|---|
+| Influência | O quanto os colegas ouvem e seguem a pessoa | PageRank + intermediação + força dos laços |
+| Faz ponte entre pessoas | A comunicação entre colegas passa por ela | Centralidade de intermediação (betweenness) |
+| Importância geral | Influência + conhecimento que só ela tem + cargo | Índice composto ("peso") |
+| Difícil de substituir | Nota de conhecimento × conhecimentos exclusivos (ponderados pela importância) | Risco de conhecimento |
+| Impacto se sair (0–100) | O quanto a empresa sentiria a saída | Custo operacional da simulação |
+| Postura com o gerente | Apoia, neutro ou resiste | Posicionamento (−2 a +2) |
+| Grupo de resistência | Pessoas que resistem e são próximas entre si | Núcleo (componente conexo de resistentes) |
+| Por quem passa a comunicação do gerente | Pessoas que podem filtrar os recados | Porteiros (dependência de Brandes) |
+| Turma informal | Quem convive mais entre si | Comunidade de Louvain (cluster) |
+| No meio de conflitos | Se dá bem com duas pessoas que brigam | Tríade desbalanceada |
+| Única ligação entre partes da equipe | Se sair, alguns ficam sem contato com o resto | Ponto de articulação |
+| Frequência | Raramente → todo dia (1 a 5) | Força do laço |
+| Clima | Muito bom → hostil (+2 a −2) | Sentimento do laço |
+
+Os níveis *Muito baixa / Baixa / Média / Alta / Muito alta* dividem cada índice (de 0 a 1) em cinco faixas iguais.
+
+### Conhecimentos (checklist)
+
+Os conhecimentos vêm de uma **lista única** (aba *Conhecimentos*) e não de texto livre. Assim não aparecem
+duplicados como "ERP", "erp" e "sistema ERP". Cada item tem uma categoria e uma importância:
+
+- **Essencial**: sem isso a empresa para ou perde dinheiro. Se só uma pessoa sabe, ela entra em *Não pode perder*,
+  mesmo que a nota de "difícil de substituir" seja baixa.
+- **Importante**: faz falta, mas dá para contornar.
+- **Desejável**: ajuda, mas não é crítico.
+
+No cálculo de "difícil de substituir", conhecimentos exclusivos pesam 1 (essencial), 0,6 (importante) e 0,3 (desejável).
+Dados de versões antigas, que guardavam o conhecimento como texto livre, são convertidos automaticamente
+em itens da lista, na categoria "Outros".
+
 ## 2. Como coletar os dados (do mais rápido ao mais robusto)
 
 1. **Mapeamento pela liderança (1–2 horas)**: você e o gerente geral cadastram pessoas e relações

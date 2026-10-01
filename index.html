@@ -3,10 +3,10 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <meta name="app-version" content="3">
+  <meta name="app-version" content="4">
   <title>Mapa Organizacional</title>
   <link rel="icon" href="data:,">
-  <link rel="stylesheet" href="css/style.css?v=3">
+  <link rel="stylesheet" href="css/style.css?v=4">
 </head>
 <body>
   <header class="topbar">
@@ -18,12 +18,13 @@
     <nav class="tabs" id="tabs">
       <button data-view="painel" class="active">Painel</button>
       <button data-view="colaboradores">Colaboradores</button>
+      <button data-view="conhecimentos">Conhecimentos</button>
       <button data-view="mapa">Mapa</button>
       <button data-view="departamentos">Setores e grupos</button>
       <button data-view="relacoes">Relações</button>
-      <button data-view="analise">Análise</button>
       <button data-view="resistencia">Resistência</button>
-      <button data-view="simulacao">Simulação</button>
+      <button data-view="simulacao">E se sair?</button>
+      <button data-view="analise">Análise detalhada</button>
       <button data-view="ocorrencias">Ocorrências</button>
       <button data-view="dados">Dados</button>
     </nav>
@@ -33,7 +34,7 @@
     <!-- PAINEL DE DECISÃO -->
     <section id="view-painel" class="view active">
       <h2>Painel de decisão</h2>
-      <p class="muted">Respostas diretas para o gerente: com quem ter cuidado, quem trazer para o seu lado, quem é influente, onde uma demissão é risco e onde é possível cortar.</p>
+      <p class="muted">Respostas diretas para o gerente: com quem ter cuidado, quem conquistar, quem tem voz, quem não pode perder e onde dá para cortar.</p>
       <div id="painel"></div>
     </section>
 
@@ -60,36 +61,43 @@
       <div id="people-table" hidden></div>
     </section>
 
+    <!-- CONHECIMENTOS (catálogo / checklist) -->
+    <section id="view-conhecimentos" class="view">
+      <h2>Conhecimentos</h2>
+      <p class="muted">A lista do que é importante saber na empresa e quem sabe cada coisa. Conhecimento que só uma pessoa sabe é um risco: se ela sair, a empresa perde.</p>
+      <div id="knowledge-panel"></div>
+    </section>
+
     <!-- MAPA -->
     <section id="view-mapa" class="view">
       <div class="map-toolbar">
-        <label>Cor por
+        <label>Cores mostram
           <select id="color-by">
             <option value="department">Setor</option>
+            <option value="stance">Postura com o gerente</option>
             <option value="group">Grupo / equipe</option>
-            <option value="community">Cluster (comunidade)</option>
-            <option value="stance">Posicionamento</option>
+            <option value="community">Turmas informais</option>
           </select>
         </label>
-        <label>Tamanho por
+        <label>Tamanho mostra
           <select id="size-by">
             <option value="influence">Influência</option>
-            <option value="peso">Peso geral</option>
-            <option value="betweenness">Intermediação</option>
-            <option value="knowledgeRisk">Risco de conhecimento</option>
-            <option value="formal">Nível hierárquico</option>
+            <option value="peso">Importância geral</option>
+            <option value="betweenness">Quem faz ponte</option>
+            <option value="knowledgeRisk">Difícil de substituir</option>
+            <option value="formal">Nível do cargo</option>
           </select>
         </label>
-        <label>Layout
+        <label>Organizar como
           <select id="layout">
-            <option value="cose">Força (rede informal)</option>
-            <option value="concentric">Concêntrico por influência</option>
-            <option value="breadthfirst">Hierarquia formal</option>
+            <option value="cose">Rede de relações</option>
+            <option value="concentric">Mais influentes no centro</option>
+            <option value="breadthfirst">Organograma</option>
           </select>
         </label>
-        <label class="chk"><input type="checkbox" id="show-pos" checked> Positivas</label>
-        <label class="chk"><input type="checkbox" id="show-neg" checked> Conflito / boicote</label>
-        <label class="chk"><input type="checkbox" id="show-formal"> Hierarquia formal</label>
+        <label class="chk"><input type="checkbox" id="show-pos" checked> Relações boas</label>
+        <label class="chk"><input type="checkbox" id="show-neg" checked> Conflitos e boicotes</label>
+        <label class="chk"><input type="checkbox" id="show-formal"> Linhas de chefia</label>
         <input type="search" id="map-search" placeholder="Buscar pessoa…">
       </div>
       <div class="map-wrap">
@@ -106,7 +114,7 @@
         <button class="primary" id="add-dep">+ Novo setor</button>
       </div>
       <div class="card"><h3>Setores</h3><div id="dep-table"></div></div>
-      <div class="card"><h3>Grupos / equipes</h3><p class="muted small">Grupos são transversais aos setores (turnos, projetos, comitês). Cadastre-os na ficha de cada colaborador.</p><div id="group-table"></div></div>
+      <div class="card"><h3>Grupos / equipes</h3><p class="muted small">Grupos juntam pessoas de setores diferentes (turnos, projetos, comitês). Cadastre-os na ficha de cada colaborador.</p><div id="group-table"></div></div>
     </section>
 
     <!-- RELAÇÕES -->
@@ -116,7 +124,7 @@
         <button class="primary" id="add-rel">+ Nova relação</button>
       </div>
       <details class="card" open>
-        <summary><strong>Cadastro rápido</strong> — marque com quem uma pessoa se relaciona</summary>
+        <summary><strong>Cadastro rápido</strong> — marque de uma vez com quem uma pessoa convive</summary>
         <div id="bulk-form" class="bulk"></div>
       </details>
       <div class="filters">
@@ -128,7 +136,8 @@
 
     <!-- ANÁLISE -->
     <section id="view-analise" class="view">
-      <h2>Análise da rede</h2>
+      <h2>Análise detalhada</h2>
+      <p class="muted">Para quem quer ir além do painel: rankings, turmas informais, duplas importantes, conflitos e dependências.</p>
       <div id="analysis"></div>
     </section>
 
@@ -140,8 +149,8 @@
 
     <!-- SIMULAÇÃO -->
     <section id="view-simulacao" class="view">
-      <h2>Simulação de saída / demissão</h2>
-      <p class="muted">Selecione uma ou mais pessoas para ver o que acontece com a rede se elas saírem. O custo operacional e a redução de resistência aparecem separados: uma decisão pode reduzir a resistência e, ao mesmo tempo, custar conhecimento crítico.</p>
+      <h2>E se a pessoa sair?</h2>
+      <p class="muted">Marque uma ou mais pessoas e veja o que acontece se elas saírem da empresa: o que se perde, quem pode sair junto e se a resistência ao gerente diminui. Uma saída pode diminuir a resistência e, ao mesmo tempo, fazer a empresa perder conhecimento importante.</p>
       <div id="simulation"></div>
     </section>
 
@@ -151,7 +160,7 @@
         <h2>Ocorrências</h2>
         <button class="primary" id="add-inc">+ Registrar ocorrência</button>
       </div>
-      <p class="muted">Registre fatos observáveis, com data e descrição objetiva (o quê, quando, impacto). Fatos documentados sustentam conversas de feedback e decisões; impressões, não.</p>
+      <p class="muted">Anote fatos que você viu, com data: o que aconteceu, quando e qual foi o prejuízo. Fatos registrados dão base para conversas e decisões; impressões, não.</p>
       <div id="inc-table"></div>
     </section>
 
@@ -165,11 +174,11 @@
   <dialog id="modal"><form method="dialog" id="modal-form"></form></dialog>
   <div id="toast" class="toast"></div>
 
-  <script src="vendor/cytoscape.min.js?v=3"></script>
-  <script src="js/analytics.js?v=3"></script>
-  <script src="js/sample-data.js?v=3"></script>
-  <script src="js/store.js?v=3"></script>
-  <script src="js/github-sync.js?v=3"></script>
-  <script src="js/app.js?v=3"></script>
+  <script src="vendor/cytoscape.min.js?v=4"></script>
+  <script src="js/analytics.js?v=4"></script>
+  <script src="js/sample-data.js?v=4"></script>
+  <script src="js/store.js?v=4"></script>
+  <script src="js/github-sync.js?v=4"></script>
+  <script src="js/app.js?v=4"></script>
 </body>
 </html>

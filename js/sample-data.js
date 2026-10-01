@@ -153,6 +153,54 @@
     Object.assign(p, { performance, engagement, groups });
   }
 
+  // Catálogo de conhecimentos (a ficha marca itens desta lista, como um checklist).
+  // importance: 3 = essencial, 2 = importante, 1 = desejável.
+  const K = (id, name, category, importance, legacy) => ({ id, name, category, importance, legacy });
+  const CATALOG = [
+    K('k_estrategia', 'Estratégia do negócio', 'Gestão', 3, 'estratégia'),
+    K('k_bancos', 'Relacionamento com bancos', 'Gestão', 3, 'relacionamento com bancos'),
+    K('k_indicadores', 'Gestão por indicadores', 'Gestão', 2, 'gestão de indicadores'),
+    K('k_lean', 'Lean / melhoria contínua', 'Gestão', 1, 'lean'),
+    K('k_pcp', 'Planejamento da produção', 'Operações e produção', 3, 'planejamento de produção'),
+    K('k_manut', 'Manutenção de máquinas', 'Operações e produção', 3, 'manutenção de máquinas'),
+    K('k_eletrica', 'Elétrica industrial', 'Operações e produção', 2, 'elétrica industrial'),
+    K('k_iso', 'Qualidade (ISO)', 'Operações e produção', 2, 'qualidade iso'),
+    K('k_auditoria', 'Auditoria interna', 'Operações e produção', 2, 'auditoria'),
+    K('k_erp_prod', 'Sistema ERP – produção', 'Sistemas e tecnologia', 3, 'erp - módulo produção'),
+    K('k_erp_integ', 'Sistema ERP – integrações', 'Sistemas e tecnologia', 3, 'erp - integrações'),
+    K('k_bd', 'Banco de dados e relatórios', 'Sistemas e tecnologia', 2, 'banco de dados'),
+    K('k_crm', 'CRM (cadastro de clientes)', 'Sistemas e tecnologia', 1, 'crm'),
+    K('k_grandes', 'Carteira de grandes clientes', 'Comercial', 3, 'carteira de grandes clientes'),
+    K('k_sul', 'Carteira de clientes do Sul', 'Comercial', 2, 'carteira regional sul'),
+    K('k_preco', 'Formação de preços', 'Comercial', 3, 'precificação'),
+    K('k_negoc', 'Negociação', 'Comercial', 1, 'negociação'),
+    K('k_fornec', 'Fornecedores-chave', 'Logística e compras', 3, 'fornecedores-chave'),
+    K('k_rotas', 'Roteiros de entrega', 'Logística e compras', 2, 'roteirização'),
+    K('k_compras', 'Compras', 'Logística e compras', 1, 'compras'),
+    K('k_caixa', 'Fluxo de caixa', 'Financeiro e administrativo', 2, 'fluxo de caixa'),
+    K('k_fiscal', 'Fiscal / impostos', 'Financeiro e administrativo', 3, 'fiscal'),
+    K('k_contab', 'Contabilidade', 'Financeiro e administrativo', 2, 'contabilidade'),
+    K('k_cobranca', 'Cobrança', 'Financeiro e administrativo', 1, 'cobrança'),
+    K('k_folha', 'Folha de pagamento', 'Financeiro e administrativo', 2, 'folha de pagamento'),
+    K('k_trab', 'Legislação trabalhista', 'Financeiro e administrativo', 2, 'trabalhista'),
+  ];
+  const byLegacy = new Map(CATALOG.map((k) => [k.legacy, k.id]));
+  SAMPLE_DATA.knowledge = CATALOG.map(({ legacy, ...k }) => k);
+  for (const p of SAMPLE_DATA.people) p.skills = p.skills.map((s) => byLegacy.get(s) || s);
+
+  // Lista sugerida para quem está começando: aparece no catálogo de conhecimentos.
+  const KNOWLEDGE_SUGGESTIONS = {
+    Gestão: ['Gestão de equipes', 'Planejamento estratégico', 'Gestão por indicadores', 'Orçamento e custos', 'Gestão de projetos'],
+    Comercial: ['Carteira de clientes-chave', 'Negociação', 'Formação de preços', 'Prospecção de novos clientes', 'Pós-venda e atendimento'],
+    'Operações e produção': ['Planejamento da produção', 'Operação de máquinas', 'Manutenção de máquinas', 'Controle de qualidade', 'Segurança do trabalho', 'Lean / melhoria contínua'],
+    'Logística e compras': ['Compras e fornecedores-chave', 'Controle de estoque', 'Roteiros de entrega', 'Comércio exterior'],
+    'Financeiro e administrativo': ['Contas a pagar e receber', 'Fluxo de caixa', 'Fiscal / impostos', 'Contabilidade', 'Folha de pagamento', 'Legislação trabalhista', 'Recrutamento e seleção'],
+    'Sistemas e tecnologia': ['Sistema ERP / de gestão', 'Excel avançado', 'Relatórios e indicadores (BI)', 'Suporte de informática'],
+  };
+
   if (typeof module === 'object' && module.exports) module.exports = SAMPLE_DATA;
-  else root.SAMPLE_DATA = SAMPLE_DATA;
+  else {
+    root.SAMPLE_DATA = SAMPLE_DATA;
+    root.KNOWLEDGE_SUGGESTIONS = KNOWLEDGE_SUGGESTIONS;
+  }
 })(typeof self !== 'undefined' ? self : this);

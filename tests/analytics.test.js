@@ -82,7 +82,7 @@ test('exemplo: casal forma núcleo de resistência com vínculo familiar', () =>
   assert.deepEqual(nucleus.familyPairs.map((p) => p.slice().sort()), [['js', 'rs']]);
   assert.ok(m.focal.gatekeepers.some((g) => g.id === 'rs' && g.stance === 'resistente'));
   const recs = A.recommendations(SAMPLE, m);
-  assert.ok(recs.some((r) => r.area === 'Governança'));
+  assert.ok(recs.some((r) => r.area === 'Regra para parentes'));
 });
 
 test('simulação: retirar o centro de uma estrela isola as pontas e perde conhecimento exclusivo', () => {
@@ -156,4 +156,25 @@ test('grupos transversais aparecem nas estatísticas', () => {
   const m = A.analyze(SAMPLE);
   const erp = m.groups.find((g) => g.name === 'Projeto ERP');
   assert.ok(erp && erp.members.includes('gu') && erp.size === 4);
+});
+
+test('catálogo de conhecimentos: nomes, importância e conhecimento exclusivo essencial', () => {
+  const people = ['a', 'b', 'c'].map((id) => person(id, { knowledge: 2 }));
+  people[0].skills = ['k1', 'k2'];
+  people[1].skills = ['k2'];
+  const d = base(people, [rel('a', 'b'), rel('b', 'c'), rel('a', 'c')]);
+  d.knowledge = [
+    { id: 'k1', name: 'Torno CNC', category: 'Máquinas', importance: 3 },
+    { id: 'k2', name: 'Excel', category: 'Sistemas', importance: 1 },
+  ];
+  const m = A.analyze(d);
+  assert.deepEqual(m.byId.get('a').uniqueSkills, ['Torno CNC']);
+  assert.deepEqual(m.byId.get('a').uniqueEssential, ['Torno CNC']);
+  assert.equal(m.skills.find((s) => s.id === 'k1').importance, 3);
+  // Mesmo com nota de conhecimento baixa, ser o único com algo essencial pesa em "não pode perder".
+  const b = A.decisionBoard(d, m);
+  assert.ok(b.people.find((p) => p.id === 'a').reasons.reter.some((r) => r.includes('Torno CNC')));
+  // Exclusivo essencial pesa mais que exclusivo desejável.
+  d.knowledge[0].importance = 1;
+  assert.ok(A.analyze(d).byId.get('a').knowledgeRisk < m.byId.get('a').knowledgeRisk);
 });

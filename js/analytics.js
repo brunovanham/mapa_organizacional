@@ -6,7 +6,8 @@
  *
  * Modelo de dados esperado:
  *   data.people[]     { id, name, role, departmentId, level(1-5), managerId,
- *                       knowledge(1-5), skills[], stance(-2..2|null), tenure, notes }
+ *                       knowledge(1-5), skills[ids do catálogo], stance(-2..2|null), tenure, notes }
+ *   data.knowledge[]  { id, name, category, importance(1 desejável, 2 importante, 3 essencial) }
  *   data.relations[]  { id, source, target, type, strength(1-5), sentiment(-2..2), notes }
  *   data.incidents[]  { id, date, type, actors[], targets[], severity(1-5), description }
  *   data.departments[]{ id, name, color }
@@ -20,14 +21,14 @@
   'use strict';
 
   const RELATION_TYPES = {
-    colaboracao: { label: 'Colaboração no trabalho', directed: false, sentiment: 1 },
+    colaboracao: { label: 'Trabalham juntos', directed: false, sentiment: 1 },
     amizade: { label: 'Amizade / afinidade', directed: false, sentiment: 2 },
-    familiar: { label: 'Vínculo familiar / conjugal', directed: false, sentiment: 2 },
-    influencia: { label: 'Influência (origem influencia destino)', directed: true, sentiment: 1 },
-    mentoria: { label: 'Mentoria (origem orienta destino)', directed: true, sentiment: 1 },
-    informacao: { label: 'Fonte de informação (origem informa destino)', directed: true, sentiment: 1 },
+    familiar: { label: 'Parentes ou casal', directed: false, sentiment: 2 },
+    influencia: { label: 'Influencia (é ouvido pelo outro)', directed: true, sentiment: 1 },
+    mentoria: { label: 'Ensina / orienta', directed: true, sentiment: 1 },
+    informacao: { label: 'Passa informações', directed: true, sentiment: 1 },
     conflito: { label: 'Conflito / atrito', directed: false, sentiment: -1 },
-    boicote: { label: 'Boicote (origem boicota destino)', directed: true, sentiment: -2 },
+    boicote: { label: 'Boicota / atrapalha', directed: true, sentiment: -2 },
   };
 
   const INCIDENT_TYPES = {
@@ -56,6 +57,9 @@
   };
 
   const STANCE_THRESHOLD = 0.75;
+
+  const IMPORTANCE = { 3: 'Essencial', 2: 'Importante', 1: 'Desejável' };
+  const IMPORTANCE_WEIGHT = { 3: 1, 2: 0.6, 1: 0.3 };
   const EPS = 1e-9;
 
   // ---------------------------------------------------------------- utilidades
@@ -509,23 +513,29 @@
         WEIGHTS.influence.strength * stN[i]
     );
 
-    // Conhecimento: habilidades exclusivas aumentam o risco de perda.
+    // Conhecimento: itens do catálogo (ou texto livre, em dados antigos).
+    // Conhecimentos que só uma pessoa domina aumentam o risco de perdê-la,
+    // ponderados pela importância (essencial pesa mais que desejável).
+    const catalog = new Map((data.knowledge || []).map((k) => [k.id, k]));
+    const skillKey = (s) => (catalog.has(s) ? s : normSkill(s));
+    const skillLabel = (key) => (catalog.has(key) ? catalog.get(key).name : key);
+    const skillWeight = (key) => IMPORTANCE_WEIGHT[(catalog.get(key) || {}).importance] || IMPORTANCE_WEIGHT[2];
+    const keysOf = (p) => [...new Set((p.skills || []).map(skillKey).filter(Boolean))];
     const holders = new Map();
     g.people.forEach((p, i) => {
-      for (const s of new Set((p.skills || []).map(normSkill).filter(Boolean))) {
+      for (const s of keysOf(p)) {
         if (!holders.has(s)) holders.set(s, []);
         holders.get(s).push(i);
       }
     });
-    const uniqueSkills = g.people.map((p) =>
-      [...new Set((p.skills || []).map(normSkill).filter(Boolean))].filter(
-        (s) => holders.get(s).length === 1
-      )
-    );
+    const uniqueKeys = g.people.map((p) => keysOf(p).filter((s) => holders.get(s).length === 1));
+    const uniqueSkills = uniqueKeys.map((ks) => ks.map(skillLabel));
+    const uniqueEssential = uniqueKeys.map((ks) => ks.filter((k) => (catalog.get(k) || {}).importance === 3).map(skillLabel));
     const knowledgeRisk = g.people.map((p, i) => {
       const k = clamp(Number(p.knowledge) || 0, 0, 5) / 5;
-      const total = new Set((p.skills || []).map(normSkill).filter(Boolean)).size;
-      const share = total ? uniqueSkills[i].length / total : 0;
+      const all = keysOf(p);
+      const total = sum(all.map(skillWeight));
+      const share = total ? sum(uniqueKeys[i].map(skillWeight)) / total : 0;
       return k * (0.4 + 0.6 * share);
     });
     const formal = g.people.map((p) => clamp(Number(p.level) || 1, 1, 5) / 5);
@@ -562,6 +572,7 @@
       influence: influence[i],
       knowledgeRisk: knowledgeRisk[i],
       uniqueSkills: uniqueSkills[i],
+      uniqueEssential: uniqueEssential[i],
       knowledge: clamp(Number(p.knowledge) || 0, 0, 5),
       performance: grade(p.performance),
       engagement: grade(p.engagement),
@@ -741,7 +752,12 @@
 
     // Habilidades
     const skills = [...holders.entries()]
-      .map(([skill, hs]) => ({ skill, holders: hs.map((i) => g.people[i].id) }))
+      .map(([key, hs]) => ({
+        id: key,
+        skill: skillLabel(key),
+        importance: (catalog.get(key) || {}).importance || null,
+        holders: hs.map((i) => g.people[i].id),
+      }))
       .sort((a, b) => a.holders.length - b.holders.length || a.skill.localeCompare(b.skill));
 
     const model = {
@@ -1047,12 +1063,12 @@
 
   // ------------------------------------------------ painel de decisão
   const DECISION_CATEGORIES = {
-    cuidado: { label: 'Com quem ter cuidado', hint: 'Resistentes influentes, porteiros resistentes, conduta negativa registrada.' },
-    trazer: { label: 'Trazer para o seu lado', hint: 'Neutros influentes sob pressão e resistentes ainda recuperáveis.' },
-    influente: { label: 'Pessoas influentes', hint: 'Quem a rede realmente escuta, independentemente do cargo.' },
-    aliado: { label: 'Aliados', hint: 'Apoiadores com influência: multiplicadores das mudanças.' },
-    reter: { label: 'Demissão é risco', hint: 'Saída cara: conhecimento exclusivo, ponto de conexão, contágio ou alto desempenho.' },
-    cortar: { label: 'Onde é possível cortar', hint: 'Baixo impacto de saída somado a desempenho baixo, baixo engajamento ou conduta registrada.' },
+    cuidado: { label: 'Atenção: ter cuidado', hint: 'Resistem ao gerente e têm força para atrapalhar: muita gente os ouve, a comunicação passa por eles ou já houve boicote registrado.' },
+    trazer: { label: 'Conquistar para o seu lado', hint: 'Ainda não tomaram partido (ou resistem pouco) e são ouvidos pelos colegas. Vale investir neles primeiro.' },
+    influente: { label: 'Quem tem voz na empresa', hint: 'As pessoas que os colegas mais escutam, seja qual for o cargo.' },
+    aliado: { label: 'Aliados do gerente', hint: 'Apoiam o gerente e são ouvidos. Podem ajudar a espalhar as mudanças.' },
+    reter: { label: 'Não pode perder', hint: 'Se saírem, a empresa sente: sabem coisas que ninguém mais sabe, ligam equipes, levariam colegas junto ou têm desempenho excelente.' },
+    cortar: { label: 'Onde dá para cortar', hint: 'A saída teria pouco impacto E há motivo concreto: desempenho baixo, pouco engajamento ou boicotes registrados.' },
   };
 
   const quantile = (sorted, q) => (sorted.length ? sorted[Math.min(sorted.length - 1, Math.floor(q * (sorted.length - 1)))] : 0);
@@ -1096,63 +1112,63 @@
       const neg = negIncidents(m.id);
       const label = m.stanceLabel;
 
-      if (m.influence >= hiInfl) add('influente', `influência #${m.influenceRank} da empresa`);
+      if (m.influence >= hiInfl) add('influente', `é a ${m.influenceRank}ª pessoa mais ouvida da empresa`);
 
       if (label === 'resistente') {
-        if (m.influence >= medInfl) add('cuidado', 'resistente com influência acima da média');
+        if (m.influence >= medInfl) add('cuidado', 'resiste ao gerente e é ouvido(a) por muitos colegas');
         const nu = nucleus.get(m.id);
-        if (nu && nu.size > 1) add('cuidado', `faz parte do núcleo de resistência ${nu.index + 1}`);
+        if (nu && nu.size > 1) add('cuidado', `faz parte de um grupo de ${nu.size} pessoas que resistem juntas`);
         const gk = gate.get(m.id);
-        if (gk && gk.dependency >= 0.1) add('cuidado', `o gerente depende dele(a) para alcançar ${Math.round(gk.dependency * 100)}% da rede`);
+        if (gk && gk.dependency >= 0.1) add('cuidado', `a comunicação do gerente com ${Math.round(gk.dependency * 100)}% da empresa passa por essa pessoa`);
       }
-      if (neg >= 1) add('cuidado', `${neg} ocorrência(s) negativa(s) registrada(s)`);
-      if ((m.tension || 0) >= 3 && label !== 'apoiador') add('cuidado', `envolvido(a) em ${m.tension} tríades de tensão`);
+      if (neg >= 1) add('cuidado', `${neg} ocorrência(s) de boicote ou atrito registrada(s)`);
+      if ((m.tension || 0) >= 3 && label !== 'apoiador') add('cuidado', `está no meio de ${m.tension} conflitos entre colegas`);
 
-      if (label === 'neutro' && engageTop.has(m.id) && m.influence >= engageInfl) add('trazer', 'neutro(a) influente e exposto(a) à pressão dos resistentes');
+      if (label === 'neutro' && engageTop.has(m.id) && m.influence >= engageInfl) add('trazer', 'ainda não tomou partido, é ouvido(a) pelos colegas e convive com quem resiste');
       if (label === 'resistente' && m.stance > -1.5 && neg === 0 && m.stanceSource !== 'informado')
-        add('trazer', 'resistência leve e sem ocorrências: ainda recuperável');
-      if (label === 'apoiador' && m.engagement !== null && m.engagement <= 2) add('trazer', 'apoia, mas está pouco engajado(a)');
+        add('trazer', 'resiste pouco e não tem boicote registrado: dá para reverter');
+      if (label === 'apoiador' && m.engagement !== null && m.engagement <= 2) add('trazer', 'apoia o gerente, mas está desmotivado(a)');
 
-      if (label === 'apoiador' && m.influence >= medInfl) add('aliado', 'apoia a gestão e tem influência');
+      if (label === 'apoiador' && m.influence >= medInfl) add('aliado', 'apoia o gerente e é ouvido(a) pelos colegas');
 
-      if (r.operationalCost >= hiCost) add('reter', `custo de saída alto (${Math.round(r.operationalCost)}/100)`);
-      if (m.uniqueSkills.length && m.knowledge >= 3) add('reter', `único(a) que domina: ${m.uniqueSkills.join(', ')}`);
-      if (m.articulation) add('reter', 'ponto único de conexão entre partes da rede');
-      if (r.contagion >= 3) add('reter', `${r.contagion} pessoas com laço forte podem sair junto`);
-      if (m.performance === 5 || (m.performance === 4 && reasons.reter)) add('reter', `alto desempenho (${m.performance}/5)`);
+      if (r.operationalCost >= hiCost) add('reter', `a saída teria impacto alto (${Math.round(r.operationalCost)} de 100)`);
+      if (m.uniqueSkills.length && (m.knowledge >= 3 || m.uniqueEssential.length)) add('reter', `é a única pessoa que sabe: ${m.uniqueSkills.join(', ')}`);
+      if (m.articulation) add('reter', 'é a única ligação entre partes da equipe');
+      if (r.contagion >= 3) add('reter', `${r.contagion} colegas muito próximos podem sair junto`);
+      if (m.performance === 5 || (m.performance === 4 && reasons.reter)) add('reter', `desempenho excelente (${m.performance} de 5)`);
 
       const lowImpact = r.operationalCost <= loCost && !m.articulation && !m.uniqueSkills.length && r.contagion <= 1 && !reasons.reter;
       if (lowImpact) {
         const why = [];
-        if (m.performance !== null && m.performance <= 2) why.push(`desempenho baixo (${m.performance}/5)`);
-        if (m.engagement !== null && m.engagement <= 2) why.push(`engajamento baixo (${m.engagement}/5)`);
-        if (neg >= 2) why.push(`${neg} ocorrências negativas documentadas`);
-        if (why.length) add('cortar', `baixo impacto de saída (${Math.round(r.operationalCost)}/100) e ${why.join(', ')}`);
+        if (m.performance !== null && m.performance <= 2) why.push(`desempenho baixo (${m.performance} de 5)`);
+        if (m.engagement !== null && m.engagement <= 2) why.push(`pouco engajamento (${m.engagement} de 5)`);
+        if (neg >= 2) why.push(`${neg} boicotes/atritos registrados`);
+        if (why.length) add('cortar', `a saída teria pouco impacto (${Math.round(r.operationalCost)} de 100) e ${why.join(', ')}`);
       }
 
       const has = (c) => !!reasons[c];
       let action;
       let tone;
       if (has('cuidado') && has('reter')) {
-        action = 'Risco crítico: resistente e difícil de substituir. Transfira o conhecimento e crie um backup antes de qualquer decisão; trate a conduta com feedback formal e documentado.';
+        action = 'Risco alto: resiste ao gerente e faz falta se sair. Primeiro, passe o conhecimento dessa pessoa para outra (treinar um substituto). Ao mesmo tempo, converse sobre a conduta e registre tudo por escrito.';
         tone = 'critico';
       } else if (has('cuidado')) {
-        action = 'Atenção: conversas individuais, expectativas por escrito e registro de ocorrências. Evite que esta pessoa seja intermediária das mensagens do gerente.';
+        action = 'Atenção: converse a sós, deixe claro o que se espera dela por escrito e registre as ocorrências. Não deixe que as mensagens do gerente passem só por ela.';
         tone = 'cuidado';
       } else if (has('cortar')) {
-        action = 'Baixo impacto de saída. Antes de cortar: feedback claro e plano de melhoria com prazo; decida com base no resultado e com apoio jurídico.';
+        action = 'Saída com pouco impacto. Antes de desligar: dê um retorno claro, combine metas com prazo e decida pelo resultado, com orientação jurídica.';
         tone = 'cortar';
       } else if (has('trazer')) {
-        action = 'Engajar: inclua em decisões e projetos do gerente, dê visibilidade e reconhecimento.';
+        action = 'Conquistar: chame para participar de decisões e projetos do gerente, reconheça em público.';
         tone = 'trazer';
       } else if (has('reter')) {
-        action = 'Reter: pessoa crítica. Reconheça, desenvolva e prepare um sucessor para reduzir a dependência.';
+        action = 'Não perder: valorize, dê perspectiva de crescimento e prepare alguém para aprender o que ela sabe.';
         tone = 'reter';
       } else if (has('aliado')) {
-        action = 'Aliado: use como multiplicador das mudanças e porta-voz junto às equipes.';
+        action = 'Aliado: peça ajuda para explicar e defender as mudanças junto às equipes.';
         tone = 'aliado';
       } else {
-        action = 'Acompanhar normalmente.';
+        action = 'Sem alerta: acompanhar normalmente.';
         tone = 'normal';
       }
 
@@ -1201,19 +1217,19 @@
           level: 'alto',
           area: 'Resistência',
           text:
-            `Núcleo de resistência com ${nu.members.map(name).join(', ')} ` +
-            `(alcance direto de ${Math.round(nu.audienceShare * 100)}% da empresa). ` +
-            'Converse individualmente e em separado com cada membro, com expectativas claras e por escrito; ' +
-            'evite conversas em grupo que reforcem a coalizão.',
+            `Grupo que resiste junto: ${nu.members.map(name).join(', ')}. ` +
+            `Eles conversam diretamente com ${Math.round(nu.audienceShare * 100)}% da empresa. ` +
+            'Converse com cada um separadamente, deixando claro por escrito o que se espera; ' +
+            'evite reuniões só com eles, que fortalecem o grupo.',
         });
         for (const [a, b] of nu.familyPairs) {
           out.push({
             level: 'alto',
-            area: 'Governança',
+            area: 'Regra para parentes',
             text:
-              `Vínculo familiar dentro do núcleo de resistência (${name(a)} e ${name(b)}). ` +
-              'Formalize uma política de parentes: nenhum dos dois decide ou avalia assuntos do outro, ' +
-              'linhas de reporte separadas e decisões relevantes passam pelo gerente geral.',
+              `${name(a)} e ${name(b)} são parentes/casal e estão no mesmo grupo de resistência. ` +
+              'Crie uma regra para parentes: um não decide nem avalia nada da área do outro, ' +
+              'cada um responde a um chefe diferente e decisões que envolvam os dois passam pelo gerente geral.',
           });
         }
       }
@@ -1222,19 +1238,19 @@
           level: 'alto',
           area: 'Comunicação',
           text:
-            `O gerente geral depende de ${name(gk.id)} para chegar a ${Math.round(gk.dependency * 100)}% da rede, ` +
-            'e essa pessoa é resistente. Crie canais diretos: reuniões de equipe sem intermediário, ' +
-            '1:1 com as lideranças abaixo dela e comunicados oficiais escritos.',
+            `A comunicação do gerente com ${Math.round(gk.dependency * 100)}% da empresa passa por ${name(gk.id)}, ` +
+            'que resiste a ele. O recado pode chegar filtrado. Crie contato direto: reuniões com as equipes, ' +
+            'conversas individuais com os líderes abaixo dessa pessoa e comunicados por escrito.',
         });
       }
       const sw = F.engagement.slice(0, 3);
       if (sw.length) {
         out.push({
           level: 'médio',
-          area: 'Engajamento',
+          area: 'Conquistar',
           text:
-            `Pessoas neutras e influentes para engajar primeiro: ${sw.map((x) => name(x.id)).join(', ')}. ` +
-            'Envolva-as em decisões e projetos visíveis do novo gerente antes que a resistência as alcance.',
+            `Conquiste primeiro: ${sw.map((x) => name(x.id)).join(', ')}. Ainda não tomaram partido e são ouvidos. ` +
+            'Chame-os para decisões e projetos do novo gerente antes que o grupo de resistência os convença.',
         });
       }
       const al = F.allies.slice(0, 3);
@@ -1242,14 +1258,14 @@
         out.push({
           level: 'médio',
           area: 'Aliados',
-          text: `Aliados com maior influência: ${al.map((x) => name(x.id)).join(', ')}. Use-os como multiplicadores das mudanças.`,
+          text: `Aliados mais ouvidos: ${al.map((x) => name(x.id)).join(', ')}. Peça ajuda a eles para explicar e defender as mudanças.`,
         });
       }
       if (F.reach2Share < 0.6) {
         out.push({
           level: 'médio',
-          area: 'Alcance',
-          text: `O gerente geral alcança apenas ${Math.round(F.reach2Share * 100)}% da empresa em até 2 passos. Aumente o contato direto com as equipes.`,
+          area: 'Contato direto',
+          text: `O gerente só consegue chegar a ${Math.round(F.reach2Share * 100)}% da empresa por meio de no máximo uma pessoa. Ele precisa de mais contato direto com as equipes.`,
         });
       }
     }
@@ -1257,7 +1273,7 @@
       out.push({
         level: 'médio',
         area: 'Continuidade',
-        text: `${name(m.id)} é ponto único de conexão e concentra conhecimento crítico. Documente processos e prepare um sucessor.`,
+        text: `${name(m.id)} é a única ligação entre partes da equipe e sabe coisas importantes. Registre os processos e treine um substituto.`,
       });
     }
     const lost = model.skills.filter((s) => s.holders.length === 1).slice(0, 8);
@@ -1265,14 +1281,14 @@
       out.push({
         level: 'baixo',
         area: 'Conhecimento',
-        text: `Conhecimentos com um único detentor: ${lost.map((s) => `${s.skill} (${name(s.holders[0])})`).join('; ')}.`,
+        text: `Só uma pessoa sabe: ${lost.map((s) => `${s.skill} (${name(s.holders[0])})`).join('; ')}. Se ela sair, a empresa perde esse conhecimento.`,
       });
     }
     for (const d of model.departments.filter((x) => x.size >= 3 && x.openness < 0.2)) {
       out.push({
         level: 'baixo',
-        area: 'Silos',
-        text: `${d.name} é um silo (só ${Math.round(d.openness * 100)}% dos laços são externos). Crie rituais entre áreas.`,
+        area: 'Área isolada',
+        text: `${d.name} trabalha isolado: só ${Math.round(d.openness * 100)}% das relações são com outras áreas. Crie reuniões e projetos em conjunto.`,
       });
     }
     return out;
@@ -1283,6 +1299,7 @@
     INCIDENT_TYPES,
     LEVELS,
     WEIGHTS,
+    IMPORTANCE,
     STANCE_THRESHOLD,
     analyze,
     simulateRemoval,
