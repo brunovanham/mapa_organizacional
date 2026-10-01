@@ -27,8 +27,8 @@ colaboradores aqui: use o repositório privado de dados.
 
 Qualquer pessoa pode **criar a empresa dela** e acessá-la depois só com o **código que escolheu**.
 Cada empresa é um arquivo `empresas/<id>.json` no repositório de dados, **criptografado com o código**:
-ninguém abre uma empresa sem o código dela, nem o administrador. Isso exige um pequeno servidor gratuito
-(Cloudflare Worker, pasta `worker/`) que guarda a chave do GitHub fora do site público.
+ninguém abre uma empresa sem o código dela, nem o administrador. Para um grupo de confiança, basta gerar um **link de convite** em *Dados → Administrador*: não precisa de
+servidor. Para abrir a desconhecidos, há um servidor gratuito opcional (Cloudflare Worker, pasta `worker/`).
 Passo a passo em [`docs/SERVIDOR.md`](docs/SERVIDOR.md).
 
 ## Colocar no ar (uma única vez, ~10 minutos)

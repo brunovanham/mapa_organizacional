@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '7';
+  const APP_VERSION = '8';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -1788,6 +1788,8 @@
     error: ['bad', 'Erro ao salvar online'],
   };
   const API_URL = String((window.MAPA_CONFIG || {}).apiUrl || '').trim();
+  // Por onde as empresas são gravadas: servidor (API) ou convite recebido.
+  const backend = () => G.companyBackend(API_URL);
   const NO_COMPANY_KEY = 'mapaOrganizacional.semEmpresa';
   const sessionFlag = (v) => {
     try {
@@ -1812,7 +1814,7 @@
   }
 
   function gateNeeded() {
-    return !!API_URL && !G.connected && !sessionFlag();
+    return !!backend() && !G.connected && !sessionFlag();
   }
 
   async function gateSubmit(form, create) {
@@ -1833,7 +1835,7 @@
     try {
       const initial = S.empty();
       initial.settings.companyName = (f.name || '').trim();
-      await G.enterCompany({ apiUrl: API_URL, code, remember: !!f.remember, create, initialData: initial });
+      await G.enterCompany({ backend: backend(), code, remember: !!f.remember, create, initialData: initial });
       form.reset();
       sessionFlag(false);
       showGate(false);
@@ -1859,7 +1861,7 @@
     el.innerHTML = `<i></i>${esc(label + time)}`;
     el.title = G.error || (G.isCompany ? 'Dados da empresa, criptografados' : G.connected ? `${G.cfg.owner}/${G.cfg.repo} · ${G.cfg.path}` : 'Os dados estão só neste navegador');
     $('#leave-btn').hidden = !G.isCompany;
-    $('#gate-btn').hidden = !API_URL || G.connected;
+    $('#gate-btn').hidden = !backend() || G.connected;
     if (currentView === 'dados') renderGitHubCard();
   }
 
@@ -1898,13 +1900,34 @@
         <div class="btn-row"><button class="danger" data-action="gh-disconnect">Desconectar este navegador</button></div>`;
       return;
     }
-    const companyIntro = API_URL
-      ? `<div class="company-intro"><h3>Empresa online</h3>
+    const companyIntro = backend()
+      ? `<div class="company-intro"><h3>Empresas com código</h3>
           <p>Você está usando o sistema <strong>sem empresa</strong>: os dados ficam só neste navegador.</p>
-          <div class="btn-row"><button class="primary" data-action="open-gate">Entrar ou criar uma empresa</button></div></div>
-         <details class="admin"><summary>Modo administrador: gravar direto no GitHub com chave de acesso</summary>`
-      : '';
-    box.innerHTML = companyIntro + `
+          <div class="btn-row"><button class="primary" data-action="open-gate">Entrar ou criar uma empresa</button></div></div>`
+      : `<div class="company-intro"><h3>Empresas com código</h3>
+          <p>Este navegador ainda não recebeu um <strong>link de convite</strong>. Para criar ou entrar numa empresa, abra o link que o administrador enviou.</p></div>`;
+    const inv = G.invite || {};
+    const inviteAdmin = `
+      <h3>Convidar pessoas (administrador)</h3>
+      <p>Gere um <strong>link de convite</strong>. Quem abrir o link poderá criar a própria empresa ou entrar numa existente com o código dela. Cada empresa fica <strong>criptografada com o próprio código</strong> no seu repositório privado de dados.</p>
+      <details class="steps">
+        <summary>Antes de gerar (uma única vez)</summary>
+        <ol>
+          <li>Crie o repositório <strong>privado</strong> de dados, por exemplo <code>mapa_organizacional_dados</code>: <a href="https://github.com/new" target="_blank" rel="noopener">github.com/new</a> → <em>Private</em> → <em>Add a README file</em>.</li>
+          <li>Crie a chave: <a href="https://github.com/settings/personal-access-tokens/new" target="_blank" rel="noopener">Fine-grained token</a> → <em>Only select repositories</em> → o repositório de dados → <em>Contents: Read and write</em> → validade → <em>Generate token</em>.</li>
+        </ol>
+      </details>
+      <div class="grid2">
+        <label>Dono do repositório<input id="inv-owner" value="${esc(inv.owner || 'brunovanham')}"></label>
+        <label>Repositório de dados (privado)<input id="inv-repo" value="${esc(inv.repo || 'mapa_organizacional_dados')}"></label>
+      </div>
+      <label>Chave de acesso (token)<input id="inv-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
+      <label class="chk"><input type="checkbox" id="inv-here" checked> Usar o convite também neste navegador</label>
+      <div class="btn-row"><button class="primary" data-action="inv-make">Gerar link de convite</button></div>
+      <div id="inv-box"></div>
+      <p class="muted small"><strong>Importante:</strong> o link leva a chave do GitHub (na parte depois do <code>#</code>, que não é enviada a nenhum servidor nem fica no código). Envie só para quem você conhece, por mensagem privada. Quem tiver o link consegue gravar no repositório de dados, mas <strong>não consegue ler nenhuma empresa sem o código dela</strong>. Para cortar o acesso de todos, apague a chave no GitHub e gere um convite novo.</p>`;
+    box.innerHTML = companyIntro + `<details class="admin"${backend() ? '' : ' open'}><summary>Administrador: convites e armazenamento</summary>` + inviteAdmin +
+      `<details class="admin"><summary>Outro modo: um único arquivo de dados com a sua chave (sem empresas)</summary>` + `
       <h3>Armazenamento no GitHub <span class="badge warn">não configurado</span></h3>
       <p>Hoje os dados estão salvos só neste navegador. Conecte a um repositório <strong>privado</strong> do GitHub para gravar e ler os dados de qualquer computador, sem banco de dados e sem login.</p>
       <details class="steps">
@@ -1924,7 +1947,7 @@
       </div>
       <label>Chave de acesso (token)<input id="gh-token" type="password" autocomplete="off" placeholder="github_pat_…"></label>
       <div class="btn-row"><button class="primary" data-action="gh-connect">Conectar</button></div>
-      ${API_URL ? '</details>' : ''}
+      </details></details>
       ${G.error ? `<p class="neg-text small">${esc(G.error)}</p>` : ''}`;
   }
 
@@ -2128,6 +2151,32 @@
       toast(`${n} colaborador(es) adicionado(s).`);
     },
     'open-gate': () => showGate(true),
+    'inv-make': async () => {
+      const inv = { owner: $('#inv-owner').value.trim(), repo: $('#inv-repo').value.trim(), branch: '', token: $('#inv-token').value.trim() };
+      if (!inv.owner || !inv.repo || !inv.token) return toast('Preencha dono, repositório e chave.');
+      const box = $('#inv-box');
+      box.innerHTML = '<p class="muted small">Conferindo a chave no GitHub…</p>';
+      try {
+        const info = await G.checkInvite(inv);
+        if (!info.private && !confirm(`O repositório ${inv.owner}/${inv.repo} é PÚBLICO. Os dados continuam criptografados, mas o recomendado é usar um repositório privado. Continuar?`)) {
+          box.innerHTML = '';
+          return;
+        }
+      } catch (e) {
+        box.innerHTML = `<p class="neg-text small">${esc(e.message)}</p>`;
+        return;
+      }
+      if ($('#inv-here').checked) G.setInvite(inv);
+      const link = G.inviteLink(inv);
+      box.innerHTML = `<div class="link-box"><input id="gh-link-input" readonly value="${esc(link)}"><button data-action="gh-copy">Copiar</button></div>
+        <p class="ok-text small">Convite pronto. Envie este link só para quem você conhece.</p>`;
+      $('#gh-link-input').select();
+      $('#gate-btn').hidden = !backend() || G.connected;
+      const intro = $('.company-intro');
+      if (intro && backend())
+        intro.innerHTML = `<h3>Empresas com código</h3><p>Convite ativo neste navegador.</p>
+          <div class="btn-row"><button class="primary" data-action="open-gate">Entrar ou criar uma empresa</button></div>`;
+    },
     'gate-demo': () => {
       sessionFlag(true);
       showGate(false);
@@ -2144,7 +2193,7 @@
       selectedId = null;
       lastLayoutKey = '';
       renderSyncStatus();
-      if (API_URL) showGate(true);
+      if (backend()) showGate(true);
       else setView('colaboradores');
       toast('Você saiu da empresa. Os dados foram apagados deste navegador.');
     },
@@ -2491,6 +2540,7 @@
     hint.textContent = e.target.value ? c.msg : 'Mínimo de 8 caracteres. Letras maiúsculas e minúsculas fazem diferença.';
     hint.className = 'small code-hint ' + (!c.ok ? 'neg-text' : c.level === 'forte' ? 'ok-text' : 'warn-text');
   });
+  G.consumeInviteLink(); // link "#convite=…" ativa as empresas neste navegador
   if (gateNeeded()) showGate(true);
   G.init(S, {
     onStatus: renderSyncStatus,

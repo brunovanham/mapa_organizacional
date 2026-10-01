@@ -4,7 +4,30 @@ Com isto, qualquer pessoa que abrir o site pode **criar a empresa dela** e acess
 **código que escolheu**. Cada empresa vira um arquivo JSON no seu repositório de dados, e cada
 pessoa só abre a empresa do código que tem.
 
-## Como funciona
+## Jeito mais simples: link de convite (sem servidor)
+
+Se você só vai passar o link para pessoas que conhece, **não precisa do Cloudflare**:
+
+1. Crie o repositório **privado** `mapa_organizacional_dados` (com *Add a README file*).
+2. Crie uma chave *fine-grained* só para esse repositório, com **Contents: Read and write**.
+3. No site, vá em **Dados → Administrador: convites e armazenamento**, preencha dono, repositório e chave
+   e clique em **Gerar link de convite**.
+4. Envie o link por mensagem privada. Quem abrir o link vê **Entrar na minha empresa / Criar nova empresa**.
+
+A chave vai na parte do link depois do `#`. Essa parte não é enviada a nenhum servidor (nem ao GitHub Pages)
+e não fica no código público. Ela fica guardada no navegador de quem abriu o link. As empresas continuam
+**criptografadas com o código de cada uma**, em `empresas/<id>.json`.
+
+Riscos, e por que são aceitáveis num grupo de confiança:
+- Quem tem o link pode **gravar** no repositório de dados. Poderia, por exemplo, estragar um arquivo, mas
+  o histórico do GitHub permite voltar a versão.
+- Quem tem o link **não consegue ler** nenhuma empresa sem o código dela.
+- Se o link vazar, apague a chave no GitHub (o acesso de todos é cortado na hora), crie outra e gere um
+  convite novo.
+
+O servidor (seção abaixo) só é necessário se você quiser abrir o sistema para desconhecidos.
+
+## Como funciona (com servidor)
 
 ```
  Navegador do visitante                 Servidor (Cloudflare Worker)          GitHub (repositório PRIVADO)

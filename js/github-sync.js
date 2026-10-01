@@ -12,8 +12,11 @@
  * Dois modos:
  *   'github'  — o dono do sistema grava direto no repositório com a própria chave.
  *   'empresa' — qualquer pessoa cria/acessa a sua empresa com um código; os dados
- *               vão CIFRADOS (js/vault.js) para a API (worker/), que grava
- *               empresas/<id>.json no repositório de dados.
+ *               vão CIFRADOS (js/vault.js) para empresas/<id>.json no repositório
+ *               de dados, por um de dois caminhos:
+ *                 - 'github': direto na API do GitHub, com a chave recebida no
+ *                   LINK DE CONVITE (#convite=…), sem servidor;
+ *                 - 'api': pela API do worker/ (Cloudflare), se configurada.
  */
 (function (root) {
   'use strict';
@@ -48,6 +51,7 @@
     }
   };
   const inSession = !readJSON(CFG_KEY) && !!readJSON(CFG_KEY, true);
+  const INVITE_KEY = 'mapaOrganizacional.convite';
 
   // Base64 com UTF-8 (acentos) nos dois sentidos.
   function b64encode(str) {
@@ -195,6 +199,30 @@
     },
   };
 
+  // Empresas direto no GitHub, com a chave do link de convite (sem servidor).
+  const ghFile = (cfg) => ({
+    owner: cfg.gh.owner,
+    repo: cfg.gh.repo,
+    branch: cfg.gh.branch || '',
+    token: cfg.gh.token,
+    path: `empresas/${cfg.id}.json`,
+  });
+  const CompanyGitHub = {
+    async read(cfg) {
+      const r = await Remote.read(ghFile(cfg));
+      if (!r.data) return { data: null, sha: null };
+      return { data: await root.Vault.unseal(r.data, cfg.keyB64), sha: r.sha };
+    },
+    head: (cfg) => Remote.head(ghFile(cfg)),
+    async write(cfg, data, sha) {
+      const envelope = await root.Vault.seal(data, cfg.keyB64);
+      return Remote.write(ghFile(cfg), envelope, sha, `${sha ? 'Atualiza' : 'Cria'} empresa ${cfg.id.slice(0, 8)}`);
+    },
+  };
+
+  const b64url = (obj) => b64encode(JSON.stringify(obj)).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
+  const fromB64url = (str) => JSON.parse(b64decode(decodeURIComponent(str).replace(/-/g, '+').replace(/_/g, '/')));
+
   // ------------------------------------------------------------ controlador
   /**
    * Sync.init(store, hooks)
@@ -216,7 +244,7 @@
     get connected() {
       const c = this.cfg;
       if (!c) return false;
-      if (c.mode === 'empresa') return !!(c.apiUrl && c.id && c.keyB64);
+      if (c.mode === 'empresa') return !!(c.id && c.keyB64 && (c.via === 'github' ? c.gh && c.gh.token : c.apiUrl));
       return !!(c.token && c.owner && c.repo);
     },
 
@@ -225,7 +253,43 @@
     },
 
     get adapter() {
-      return this.isCompany ? CompanyRemote : Remote;
+      if (!this.isCompany) return Remote;
+      return this.cfg.via === 'github' ? CompanyGitHub : CompanyRemote;
+    },
+
+    // ----- convite (empresas sem servidor)
+    invite: readJSON(INVITE_KEY),
+
+    /** Por onde as empresas são gravadas: API configurada ou convite recebido. */
+    companyBackend(apiUrl) {
+      if (apiUrl) return { kind: 'api', apiUrl };
+      if (this.invite && this.invite.token && this.invite.owner && this.invite.repo) return { kind: 'github', gh: this.invite };
+      return null;
+    },
+
+    setInvite(inv) {
+      this.invite = inv;
+      writeJSON(INVITE_KEY, inv);
+    },
+
+    inviteLink(inv) {
+      return `${location.origin}${location.pathname}#convite=${b64url({ o: inv.owner, r: inv.repo, b: inv.branch || '', t: inv.token })}`;
+    },
+
+    /** Confere a chave e o repositório antes de gerar o convite. */
+    checkInvite: (inv) => Remote.repoInfo({ ...inv, path: '' }),
+
+    consumeInviteLink() {
+      const m = /[#&]convite=([^&]+)/.exec(location.hash);
+      if (!m) return false;
+      try {
+        const raw = fromB64url(m[1]);
+        if (raw.o && raw.r && raw.t) this.setInvite({ owner: raw.o, repo: raw.r, branch: raw.b || '', token: raw.t });
+      } catch (e) {
+        console.warn('Link de convite inválido', e);
+      }
+      history.replaceState(null, '', location.pathname + location.search);
+      return true;
     },
 
     setCfg(cfg, remember) {
@@ -261,6 +325,7 @@
       this.store = store;
       this.hooks = hooks || {};
       this.consumeAccessLink();
+      this.consumeInviteLink();
       store.onPersist((data, meta) => {
         if (!this.connected || (meta && meta.fromRemote)) return;
         this.saveState({ dirty: true });
@@ -350,8 +415,12 @@
      */
     async enterCompany(opts) {
       const { id, keyB64 } = await root.Vault.open(opts.code);
-      const cfg = { mode: 'empresa', apiUrl: opts.apiUrl, id, keyB64 };
-      const remote = await CompanyRemote.read(cfg);
+      const backend = opts.backend || { kind: 'api', apiUrl: opts.apiUrl };
+      const cfg =
+        backend.kind === 'github'
+          ? { mode: 'empresa', via: 'github', gh: backend.gh, id, keyB64 }
+          : { mode: 'empresa', via: 'api', apiUrl: backend.apiUrl, id, keyB64 };
+      const remote = await (backend.kind === 'github' ? CompanyGitHub : CompanyRemote).read(cfg);
       if (opts.create && remote.data) throw new Error('Já existe uma empresa com este código. Escolha outro código.');
       if (!opts.create && !remote.data)
         throw new Error('Nenhuma empresa encontrada com este código. Confira o código: letras maiúsculas e minúsculas fazem diferença.');
@@ -474,5 +543,6 @@
 
   root.GitHubSync = Sync;
   root.CompanyRemote = CompanyRemote;
+  root.CompanyGitHub = CompanyGitHub;
   root.GitHubRemote = Remote;
 })(typeof self !== 'undefined' ? self : this);
