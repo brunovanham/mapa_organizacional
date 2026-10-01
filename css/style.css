@@ -465,3 +465,4 @@ details.admin summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
 .gate-where { max-width: 640px; margin: 10px auto 0; font-size: 13px; padding: 8px 12px; border-radius: 8px; background: var(--surface); border: 1px solid var(--border); }
 .leave-btn { font-weight: 600; border-color: var(--bad); color: var(--bad); }
 .brand #company-name { font-weight: 600; color: var(--text); }
+.gate-where:has(strong) { border-left: 4px solid var(--warn); text-align: left; }

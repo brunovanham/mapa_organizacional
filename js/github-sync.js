@@ -449,7 +449,11 @@
       const remote = await ({ github: CompanyGitHub, local: CompanyLocal }[backend.kind] || CompanyRemote).read(cfg);
       if (opts.create && remote.data) throw new Error('Já existe uma empresa com este código. Escolha outro código.');
       if (!opts.create && !remote.data)
-        throw new Error('Nenhuma empresa encontrada com este código. Confira o código: letras maiúsculas e minúsculas fazem diferença.');
+        throw new Error(
+          backend.kind === 'local'
+            ? 'Empresa não encontrada neste navegador. Se ela foi criada online, abra primeiro o LINK DE CONVITE neste navegador e depois digite o código. Confira também maiúsculas e minúsculas.'
+            : 'Nenhuma empresa encontrada com este código. Confira o código: letras maiúsculas e minúsculas fazem diferença.'
+        );
       clearTimeout(this.timer);
       this.setCfg(cfg, !!opts.remember);
       if (opts.create) {

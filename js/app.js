@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '10';
+  const APP_VERSION = '11';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -1813,7 +1813,7 @@
       if (where)
         where.innerHTML =
           k === 'local'
-            ? '🔒 Os dados ficam <strong>criptografados neste computador</strong>. Para acessar de outros computadores, abra o <strong>link de convite</strong> enviado pelo administrador antes de criar a empresa.'
+            ? '⚠️ Este navegador ainda <strong>não abriu o link de convite</strong>. Se a sua empresa está online, abra primeiro o link de convite que o administrador enviou. Sem ele, uma empresa nova fica salva só neste computador.'
             : '🔒 Os dados ficam <strong>criptografados e salvos online</strong>. Você acessa de qualquer computador com o mesmo código.';
       const first = $('#gate-enter [name="code"]');
       if (first) first.focus();
