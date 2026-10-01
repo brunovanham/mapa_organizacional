@@ -63,7 +63,7 @@ Também funciona sem GitHub: basta abrir `index.html` no navegador, e os dados f
 | E se sair? | Simula a saída de uma ou mais pessoas: impacto (0 a 100), conhecimento perdido, colegas que podem sair junto e quanto cai a resistência. Inclui uma frase-resumo. |
 | Análise detalhada | Rankings, turmas informais, duplas importantes, conflitos, cargo × influência real e dependências perigosas. |
 | Ocorrências | Registro de fatos (boicote, retenção de informação…) que embasam conversas e decisões. |
-| Dados | GitHub, link de acesso, backup, importação CSV e exemplo fictício. |
+| Dados | Link de convite, **planilha para Excel (exportar/importar CSV)**, backup JSON e exemplo fictício. |
 
 A linguagem é pensada para quem não é especialista: os índices aparecem como *Muito baixa … Muito alta* em vez de
 números soltos, a postura aparece em palavras (*Apoia*, *Tende a resistir*…), e cada termo tem um **?** com a explicação.

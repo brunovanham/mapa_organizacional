@@ -8,7 +8,7 @@
   const S = window.Store;
 
   // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
-  const APP_VERSION = '15';
+  const APP_VERSION = '16';
   const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
   if (pageVersion !== APP_VERSION) {
     // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
@@ -2102,15 +2102,28 @@
           <button class="primary" data-action="save-settings">Salvar configurações</button>
         </div>
         <div class="card">
-          <h3>Backup e importação</h3>
-          <p class="muted small">Cópia de segurança manual em arquivo. Os dados também ficam em cache neste navegador; com o GitHub conectado, cada gravação vira uma versão no histórico.</p>
+          <h3>Planilha (Excel)</h3>
+          <p class="small">Baixe a empresa inteira numa planilha para <strong>guardar uma cópia</strong> ou <strong>editar no Excel</strong> e depois importar de volta.</p>
+          <div class="btn-row">
+            <button class="primary" data-action="export-csv">Exportar planilha (CSV)</button>
+            <label class="button">Importar planilha (CSV)<input type="file" id="import-csv" accept=".csv,text/csv,.txt" hidden></label>
+          </div>
+          <details class="steps small">
+            <summary>Como editar no Excel</summary>
+            <ul>
+              <li>O arquivo tem blocos, um embaixo do outro: <strong>#CONFIGURACOES, #SETORES, #CONHECIMENTOS, #COLABORADORES, #RELACOES e #OCORRENCIAS</strong>. Não apague as linhas que começam com <code>#</code> nem os cabeçalhos.</li>
+              <li>Para incluir, adicione linhas no bloco certo. Pessoas, setores e conhecimentos são ligados <strong>pelo nome</strong>: escreva igual nos dois lugares.</li>
+              <li>Listas numa célula (grupos, conhecimentos, quem fez) são separadas por <code>|</code>.</li>
+              <li>Valores podem ser em palavras ("Tende a apoiar", "Toda semana", "Essencial") ou números. Deixe vazio o que não souber ("?").</li>
+              <li>Ao salvar, escolha <strong>CSV (separado por vírgulas)</strong> ou <strong>CSV UTF-8</strong>. Na importação, o sistema mostra um resumo e os avisos antes de substituir os dados.</li>
+              <li>A coluna <code>id</code> dos colaboradores serve para reconhecer a mesma pessoa; deixe vazia nas linhas novas.</li>
+            </ul>
+          </details>
+          <h4>Cópia técnica (JSON)</h4>
           <div class="btn-row">
             <button data-action="export">Exportar JSON</button>
             <label class="button">Importar JSON<input type="file" id="import-json" accept=".json,application/json" hidden></label>
           </div>
-          <h4>Importar pessoas via CSV</h4>
-          <p class="muted small">Colunas (separador <code>;</code> ou <code>,</code>): <code>nome;cargo;setor;nivel;gestor;conhecimento;desempenho;engajamento;grupos;habilidades</code> (só <code>nome</code> é obrigatória). Gestor pelo nome; grupos e habilidades separados por <code>|</code>. Setores inexistentes são criados.</p>
-          <label class="button">Importar CSV<input type="file" id="import-csv" accept=".csv,text/csv" hidden></label>
           <h4>Outros</h4>
           <div class="btn-row">
             <button data-action="load-sample">Carregar exemplo fictício</button>
@@ -2129,6 +2142,47 @@
         </ul>
       </div>`;
     renderGitHubCard();
+  }
+
+  function importStructuredCSV(text, fileName) {
+    let res;
+    try {
+      res = window.CsvIO.fromCSV(text, A, { uid: S.uid, palette: CLUSTER_PALETTE });
+    } catch (e) {
+      return toast('Planilha inválida: ' + e.message);
+    }
+    const c = res.counts;
+    const w = res.warnings;
+    const online = G.connected ? '<p class="small warn-text">Esta empresa está salva online: os dados online também serão substituídos (a versão anterior fica no histórico).</p>' : '';
+    openModal(
+      'Importar planilha',
+      `<p>Arquivo <strong>${esc(fileName)}</strong>:</p>
+       <ul class="import-summary">
+         <li><strong>${c.colaboradores}</strong> colaboradores</li>
+         <li><strong>${c.relacoes}</strong> relações</li>
+         <li><strong>${c.setores}</strong> setores · <strong>${c.conhecimentos}</strong> conhecimentos · <strong>${c.ocorrencias}</strong> ocorrências</li>
+       </ul>
+       ${
+         w.length
+           ? `<details class="import-warn" open><summary>${w.length} aviso(s): linhas ajustadas ou ignoradas</summary><ul>${w
+               .slice(0, 60)
+               .map((x) => `<li>${esc(x)}</li>`)
+               .join('')}${w.length > 60 ? `<li>… e mais ${w.length - 60}</li>` : ''}</ul></details>`
+           : '<p class="ok-text small">Nenhum problema encontrado.</p>'
+       }
+       <p class="small"><strong>Os dados atuais serão substituídos</strong> pelos da planilha. Se quiser, exporte uma cópia antes.</p>
+       ${online}`,
+      () => {
+        selectedId = null;
+        fichaId = null;
+        lastLayoutKey = '';
+        S.replace(res.data);
+        setView('painel');
+        toast(`Planilha importada: ${c.colaboradores} colaboradores e ${c.relacoes} relações.`);
+      },
+      null,
+      { submit: 'Substituir pelos dados da planilha', cancel: 'Cancelar' }
+    );
   }
 
   function importCSV(text) {
@@ -2534,6 +2588,16 @@
       });
       toast('Configurações salvas.');
     },
+    'export-csv': () => {
+      const stamp = new Date().toISOString().slice(0, 10);
+      const name = (data().settings.companyName || 'empresa').normalize('NFD').replace(/[\u0300-\u036f]/g, '').replace(/[^\w]+/g, '-').replace(/^-|-$/g, '').toLowerCase() || 'empresa';
+      const a = document.createElement('a');
+      a.href = URL.createObjectURL(new Blob([window.CsvIO.toCSV(data(), A)], { type: 'text/csv;charset=utf-8' }));
+      a.download = `mapa-${name}-${stamp}.csv`;
+      a.click();
+      setTimeout(() => URL.revokeObjectURL(a.href), 1000);
+      toast('Planilha exportada. Abra no Excel para ver ou editar.');
+    },
     export: () => {
       const stamp = new Date().toISOString().slice(0, 10);
       download(`mapa-organizacional-${stamp}.json`, S.exportJSON());
@@ -2636,7 +2700,13 @@
         }
       });
     } else if (t.id === 'import-csv' && t.files[0]) {
-      t.files[0].text().then((txt) => toast(`${importCSV(txt)} pessoa(s) importada(s).`));
+      const file = t.files[0];
+      t.value = '';
+      file.text().then((txt) => {
+        if (window.CsvIO.isStructured(txt)) return importStructuredCSV(txt, file.name);
+        // Lista simples de pessoas (formato antigo): adiciona sem apagar nada.
+        toast(`${importCSV(txt)} pessoa(s) adicionada(s).`);
+      });
     }
   });
 

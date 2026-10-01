@@ -486,3 +486,7 @@ details.admin summary { cursor: pointer; color: var(--muted); margin: 8px 0; }
 .cluster-alerts .ca-ok { border-left-color: var(--ok); }
 .cluster-alerts .ca-info { border-left-color: var(--accent); }
 .cluster-card button { align-self: flex-start; margin-top: 4px; }
+.import-summary { margin: 4px 0 8px; padding-left: 20px; }
+.import-warn { font-size: 12px; max-height: 220px; overflow-y: auto; background: var(--surface-2); border-radius: 6px; padding: 6px 10px; }
+.import-warn summary { cursor: pointer; font-weight: 600; color: var(--warn); }
+.import-warn ul { margin: 6px 0 0; padding-left: 18px; }
