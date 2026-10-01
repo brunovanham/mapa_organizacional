@@ -7,6 +7,25 @@
   const A = window.OrgAnalytics;
   const S = window.Store;
 
+  // Deve ser igual ao ?v= dos arquivos e ao <meta name="app-version"> do index.html.
+  const APP_VERSION = '3';
+  const pageVersion = (document.querySelector('meta[name="app-version"]') || {}).content;
+  if (pageVersion !== APP_VERSION) {
+    // Página e scripts de versões diferentes (cache do navegador): recarrega uma vez.
+    let reloaded = false;
+    try {
+      reloaded = sessionStorage.getItem('mapaOrganizacional.reload') === APP_VERSION;
+      sessionStorage.setItem('mapaOrganizacional.reload', APP_VERSION);
+    } catch (e) {
+      reloaded = true;
+    }
+    if (!reloaded) {
+      location.reload();
+      return;
+    }
+    console.warn(`Versão da página (${pageVersion}) diferente da dos scripts (${APP_VERSION}). Recarregue com Ctrl+Shift+R.`);
+  }
+
   // ------------------------------------------------------------ helpers
   const $ = (s, el) => (el || document).querySelector(s);
   const $$ = (s, el) => [...(el || document).querySelectorAll(s)];
@@ -1776,8 +1795,10 @@
       if (data().people.length && !confirm('Substituir os dados atuais pelo exemplo fictício? Exporte antes se quiser guardar.')) return;
       selectedId = null;
       lastLayoutKey = '';
+      fichaId = null;
       S.replace(window.SAMPLE_DATA);
-      toast('Exemplo fictício carregado.');
+      setView('painel');
+      toast('Exemplo fictício carregado: veja o painel de decisão.');
     },
     'clear-all': () => {
       const where = G.connected ? ' (também no GitHub — a versão anterior fica no histórico)' : '';
@@ -1856,8 +1877,20 @@
     }
   });
 
-  $('#rel-filter').addEventListener('input', () => renderRelations());
-  $('#cad-search').addEventListener('input', () => renderCadList());
+  S.onChange(() => {
+    recompute();
+    render();
+  });
+
+  // Liga um evento só se o elemento existir: uma página em cache de outra
+  // versão não pode derrubar o aplicativo inteiro.
+  const on = (sel, ev, fn) => {
+    const el = $(sel);
+    if (el) el.addEventListener(ev, fn);
+    else console.warn('Elemento ausente na página:', sel);
+  };
+  on('#rel-filter', 'input', () => renderRelations());
+  on('#cad-search', 'input', () => renderCadList());
   document.addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
     const id = e.target.id;
@@ -1887,26 +1920,22 @@
     tip.style.left = Math.max(0, x) + 'px';
     tip.style.top = e.clientY - wrap.top + 14 + 'px';
   });
-  $('#map-search').addEventListener('input', (e) => {
+  on('#map-search', 'input', (e) => {
     const q = e.target.value.trim().toLowerCase();
     if (!q) return highlight(selectedId);
     const p = data().people.find((x) => x.name.toLowerCase().includes(q));
     if (p) selectPerson(p.id);
   });
-  $('#tabs').addEventListener('click', (e) => {
+  on('#tabs', 'click', (e) => {
     const b = e.target.closest('button[data-view]');
     if (b) setView(b.dataset.view);
   });
-  $('#add-dep').onclick = () => depForm();
-  $('#add-rel').onclick = () => relationForm();
-  $('#add-inc').onclick = () => incidentForm();
+  on('#add-dep', 'click', () => depForm());
+  on('#add-rel', 'click', () => relationForm());
+  on('#add-inc', 'click', () => incidentForm());
 
   window.matchMedia('(prefers-color-scheme: dark)').addEventListener('change', () => currentView === 'mapa' && renderMap());
 
-  S.onChange(() => {
-    recompute();
-    render();
-  });
   recompute();
   setView(data().people.length ? 'painel' : 'colaboradores');
   G.init(S, {
